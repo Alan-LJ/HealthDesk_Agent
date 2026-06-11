@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HealthDesk Agent</title>
+    <link rel="stylesheet" href="/static/pet/pet.css?v=20260610-corgi-canvas" />
+  </head>
+  <body>
+    <main class="desktop-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">H</span>
+          <div>
+            <h1>HealthDesk Agent</h1>
+            <p>LangGraph + DeepSeek</p>
+          </div>
+        </div>
+        <div class="top-actions">
+          <label class="scenario-picker">
+            <span>场景</span>
+            <select id="scenario">
+              <option value="normal_work">normal_work</option>
+              <option value="sedentary_high">sedentary_high</option>
+              <option value="low_hydration">low_hydration</option>
+              <option value="dry_environment">dry_environment</option>
+              <option value="vital_low_confidence">vital_low_confidence</option>
+              <option value="device_degraded">device_degraded</option>
+              <option value="mixed_risk">mixed_risk</option>
+            </select>
+          </label>
+          <button id="tick" type="button" title="生成状态">
+            <span aria-hidden="true">↻</span>
+            <span>Tick</span>
+          </button>
+          <form class="message-form" id="messageForm">
+            <input
+              class="message-input"
+              id="messageInput"
+              type="text"
+              value="分析我当前办公健康状态，并生成桌宠提醒"
+              autocomplete="off"
+              aria-label="输入给 Agent 的消息"
+            />
+            <button class="primary send-button" id="sendMessage" type="submit" title="发送">
+              <span aria-hidden="true">➤</span>
+              <span>发送</span>
+            </button>
+          </form>
+        </div>
+      </header>
+
+      <section class="workspace" id="workspace">
+        <div class="main-stage">
+          <div class="scene">
+            <div class="desk-line" aria-hidden="true"></div>
+            <div class="pet-companion idle" id="pet" aria-label="HealthDesk 柯基桌宠小灵" role="img">
+              <div class="speech" id="petSpeech">等待真实 Agent 输出</div>
+              <div class="pet-visual" aria-hidden="true">
+                <div class="heart-layer" id="heartLayer"></div>
+                <canvas
+                  class="pet-canvas"
+                  id="petCanvas"
+                  width="220"
+                  height="220"
+                  data-normal-src="/pet/assets/corgi_normal.png"
+                  data-excited-src="/pet/assets/corgi_ears_up.png"
+                ></canvas>
+              </div>
+              <div class="pet-name" aria-hidden="true">小灵</div>
+            </div>
+          </div>
+
+          <section class="control-deck" aria-label="Agent 控制与结果">
+            <section class="panel status-panel">
+              <div class="panel-head">
+                <h2>Agent</h2>
+                <span class="runtime-pill" id="runtimePill">langgraph_deepseek</span>
+              </div>
+              <div class="task-preview" id="taskPreview">分析我当前办公健康状态，并生成桌宠提醒</div>
+              <div class="status-line" id="statusLine">Ready</div>
+            </section>
+
+            <section class="panel metrics-panel">
+              <div class="panel-head">
+                <h2>State</h2>
+                <button id="refreshState" type="button" title="刷新状态"><span aria-hidden="true">⟳</span></button>
+              </div>
+              <div class="metric-grid" id="stateMetrics">
+                <div><span>久坐</span><strong>-</strong></div>
+                <div><span>饮水</span><strong>-</strong></div>
+                <div><span>温度</span><strong>-</strong></div>
+                <div><span>设备</span><strong>-</strong></div>
+              </div>
+            </section>
+
+            <section class="panel output-panel">
+              <div class="panel-head">
+                <h2>Output</h2>
+                <span id="confidence">-</span>
+              </div>
+              <p id="summary">真实 Agent 的结构化输出会显示在这里。</p>
+              <div class="recommendations" id="recommendations"></div>
+            </section>
+          </section>
+        </div>
+
+        <aside class="trace-sidebar">
+          <section class="panel trace-panel">
+            <div class="panel-head">
+              <h2>Trace</h2>
+              <span id="traceId">-</span>
+            </div>
+            <div class="trace-list" id="traceList"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+    <script src="/static/pet/pet.js?v=20260610-corgi-canvas"></script>
+  </body>
+</html>
