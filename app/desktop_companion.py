@@ -33,7 +33,7 @@ SM_CYVIRTUALSCREEN = 79
 APP_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_DIR.parent
 PET_ASSET_DIR = PROJECT_ROOT / "pics"
-POSITION_FILE = PROJECT_ROOT / ".hda" / "desktop_companion_position.json"
+POSITION_FILE = PROJECT_ROOT / ".hdagent" / "desktop_companion_position.json"
 
 
 class DesktopCompanion:

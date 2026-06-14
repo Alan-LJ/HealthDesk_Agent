@@ -32,7 +32,7 @@ HealthDesk Agent 想做得更普惠一点：
 - 统一上下文：通过 `AgentState + AIContext` 承载当前状态、近期事件、今日统计、设备健康和 memory summary。
 - 健康分析工具：支持久坐、饮水、环境舒适度、生命体征趋势参考、设备可信度分析。
 - 复合快路径：`analyze_office_health_snapshot` 一次性生成办公健康快照，减少多轮工具调用带来的等待。
-- RAG 知识检索：本地 Markdown 知识库提供健康建议、设备说明和桌宠话术模板。
+- RAG 知识检索：基于本地 Markdown 知识库，支持 Chroma 向量相似度检索 + BM25 关键词检索融合。
 - 结构化输出：最终结果必须通过 `HealthAgentFinalOutput` 校验，前端和桌宠只消费稳定 JSON。
 - Guardrails：限制医疗化表达，避免输出诊断、疾病判断、治疗建议等高风险内容。
 - Trace 回放：记录模型调用、工具序列、observation、RAG chunks、guardrail 状态、停止原因和延迟。
@@ -49,6 +49,7 @@ DeepSeek API
 LangChain / langchain-deepseek
 Pydantic
 RAG
+Chroma
 JavaScript
 Tkinter
 Pillow
@@ -61,6 +62,54 @@ Pillow
 当前开源版本使用 `simulation` 模块模拟办公状态，并写入 SQLite。真实毫米波雷达、深度相机、水杯、温湿度传感器等硬件接入，可以落在 `raw -> feature -> state` 数据层。Agent 层读取的是统一的 `StateData`、`EventData`、`SensorHealth`，因此后续替换真实采集源时，核心 Agent pipeline 不需要大改。
 
 当前前端交互使用 HTTP 同步接口。WebSocket/SSE 进度推送是后续优化方向，用于让桌宠在 Agent 思考过程中持续显示进度。
+
+## RAG 实现
+
+当前 RAG 已从纯关键词原型升级为可选 Chroma 向量数据库后端。
+
+默认配置是：
+
+```text
+RAG_BACKEND=auto
+```
+
+`auto` 会优先尝试启用 Chroma hybrid retriever；如果当前环境没有安装 `chromadb`，会自动降级到原来的轻量关键词检索器，保证项目仍然能跑。
+
+Chroma hybrid 版本的检索链路：
+
+```text
+Markdown 文档
+-> 按标题/空行切 chunk
+-> 生成 source/category/chunk_index/content_hash 元数据
+-> 写入 Chroma PersistentClient
+-> 查询时执行向量相似度检索
+-> 同时执行本地 BM25 关键词检索
+-> 对 vector score 和 BM25 score 归一化
+-> 按权重融合并返回 KnowledgeChunk
+```
+
+默认权重：
+
+```text
+RAG_HYBRID_VECTOR_WEIGHT=0.65
+RAG_HYBRID_BM25_WEIGHT=0.35
+```
+
+知识库 category 会用于过滤不同工具的检索范围：
+
+```text
+search_health_knowledge -> sedentary / hydration / environment
+search_pet_templates    -> pet_dialogue
+search_device_docs      -> device
+```
+
+重建 Chroma 索引：
+
+```powershell
+python scripts\rebuild_rag_index.py
+```
+
+当前开源版本为了避免额外模型下载，内置了一个 deterministic hashing embedding function，适合本地演示和 CI。后续可以替换为 bge-m3、sentence-transformers 或云端 embedding 模型，Agent 工具接口不需要变化。
 
 ## Agent Pipeline
 
@@ -131,7 +180,7 @@ pip install -r requirements.txt
 
 ### 2. 配置 DeepSeek
 
-复制 `.env.example` 为 `.env`，填入你的 API Key：
+复制 `.env.example` 为 `.hdagent/.env`，填入你的 API Key。真实 Agent 的本地运行配置统一放在 `.hdagent` 虚拟环境目录中，避免继续使用旧的 `.hda` 目录：
 
 ```text
 DEEPSEEK_API_KEY=你的 DeepSeek API Key
@@ -140,10 +189,18 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 DEEPSEEK_THINKING=disabled
 DEEPSEEK_REASONING_EFFORT=high
 
-DATABASE_PATH=./healthdesk.db
+HEALTHDESK_DB_PATH=.hdagent/healthdesk.db
+DATABASE_PATH=.hdagent/healthdesk.db
 MAX_AGENT_STEPS=6
 MAX_SAME_TOOL_CALLS=2
 RAG_TOP_K=3
+RAG_BACKEND=auto
+RAG_CHROMA_PATH=.hdagent/chroma
+RAG_CHROMA_COLLECTION=healthdesk_rag
+RAG_HYBRID_VECTOR_WEIGHT=0.65
+RAG_HYBRID_BM25_WEIGHT=0.35
+RAG_EMBEDDING_DIMENSIONS=384
+RAG_REBUILD_ON_START=true
 TRACE_TO_SQLITE=true
 
 HEALTHDESK_PET_VIEW=dashboard
@@ -210,7 +267,7 @@ geometry("+x+y")
 它支持跨屏拖动，位置会保存到：
 
 ```text
-.hda/desktop_companion_position.json
+.hdagent/desktop_companion_position.json
 ```
 
 ## 常用 API

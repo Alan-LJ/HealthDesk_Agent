@@ -27,8 +27,19 @@ def _load_env_file() -> None:
     这里先复用一个极简读取器：只处理 KEY=VALUE，且不覆盖已存在的系统环境变量。
     """
 
-    candidates = [Path.cwd() / ".env", Path(__file__).resolve().parents[2] / ".env"]
+    project_root = Path(__file__).resolve().parents[2]
+    candidates = [
+        project_root / ".hdagent" / ".env",
+        Path.cwd() / ".hdagent" / ".env",
+        Path.cwd() / ".env",
+        project_root / ".env",
+    ]
+    seen: set[Path] = set()
     for path in candidates:
+        path = path.resolve()
+        if path in seen:
+            continue
+        seen.add(path)
         if not path.exists():
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -56,6 +67,16 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
 class AgentRuntimeSettings(BaseModel):
     """LangGraph + DeepSeek 真实 Agent runtime 的集中配置。"""
 
@@ -64,10 +85,17 @@ class AgentRuntimeSettings(BaseModel):
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_thinking: DeepSeekThinkingMode = "disabled"
     deepseek_reasoning_effort: str = "high"
-    database_path: str = "healthdesk.db"
+    database_path: str = ".hdagent/healthdesk.db"
     max_agent_steps: int = Field(default=6, ge=1)
     max_same_tool_calls: int = Field(default=2, ge=1)
     rag_top_k: int = Field(default=3, ge=1)
+    rag_backend: str = "auto"
+    rag_chroma_path: str = ".hdagent/chroma"
+    rag_collection_name: str = "healthdesk_rag"
+    rag_hybrid_vector_weight: float = Field(default=0.65, ge=0.0, le=1.0)
+    rag_hybrid_bm25_weight: float = Field(default=0.35, ge=0.0, le=1.0)
+    rag_embedding_dimensions: int = Field(default=384, ge=32)
+    rag_rebuild_on_start: bool = True
     trace_to_sqlite: bool = True
 
     @property
@@ -87,9 +115,16 @@ def load_runtime_settings() -> AgentRuntimeSettings:
         deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/"),
         deepseek_thinking=os.getenv("DEEPSEEK_THINKING", "disabled").strip().lower(),  # type: ignore[arg-type]
         deepseek_reasoning_effort=os.getenv("DEEPSEEK_REASONING_EFFORT", "high").strip().lower(),
-        database_path=os.getenv("DATABASE_PATH", os.getenv("HEALTHDESK_DB_PATH", "healthdesk.db")),
+        database_path=os.getenv("DATABASE_PATH", os.getenv("HEALTHDESK_DB_PATH", ".hdagent/healthdesk.db")),
         max_agent_steps=_env_int("MAX_AGENT_STEPS", 6),
         max_same_tool_calls=_env_int("MAX_SAME_TOOL_CALLS", 2),
         rag_top_k=_env_int("RAG_TOP_K", 3),
+        rag_backend=os.getenv("RAG_BACKEND", "auto").strip().lower(),
+        rag_chroma_path=os.getenv("RAG_CHROMA_PATH", ".hdagent/chroma"),
+        rag_collection_name=os.getenv("RAG_CHROMA_COLLECTION", "healthdesk_rag"),
+        rag_hybrid_vector_weight=_env_float("RAG_HYBRID_VECTOR_WEIGHT", 0.65),
+        rag_hybrid_bm25_weight=_env_float("RAG_HYBRID_BM25_WEIGHT", 0.35),
+        rag_embedding_dimensions=_env_int("RAG_EMBEDDING_DIMENSIONS", 384),
+        rag_rebuild_on_start=_env_bool("RAG_REBUILD_ON_START", True),
         trace_to_sqlite=_env_bool("TRACE_TO_SQLITE", True),
     )

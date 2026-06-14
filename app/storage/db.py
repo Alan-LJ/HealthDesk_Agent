@@ -5,13 +5,16 @@ import sqlite3
 from pathlib import Path
 
 
-DEFAULT_DB_PATH = os.getenv("HEALTHDESK_DB_PATH", "healthdesk.db")
+DEFAULT_DB_PATH = os.getenv("HEALTHDESK_DB_PATH", ".hdagent/healthdesk.db")
 
 
 def connect(db_path: str | Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     """创建 SQLite 连接，并开启 Row 字典式访问，方便 Repository 解析。"""
 
-    conn = sqlite3.connect(str(db_path))
+    path = Path(db_path)
+    if path.parent != Path("."):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     return conn
 
