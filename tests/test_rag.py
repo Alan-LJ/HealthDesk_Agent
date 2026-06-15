@@ -1,10 +1,12 @@
 import pytest
 
-from app.agent_tools.rag_tools import build_rag_tools
+from app.agent_tools import rag_tools
+from app.agent_tools.rag_tools import build_default_rag_retriever, build_rag_tools
+from app.agent_runtimes.settings import AgentRuntimeSettings
 from app.rag.bm25 import BM25Index
 from app.rag.chunking import chunk_markdown_documents
 from app.rag.simple_retriever import SimpleRetriever
-from app.rag.vector_retriever import ChromaHybridRetriever
+from app.rag.vector_retriever import ChromaBackendError, ChromaHybridRetriever
 
 
 def test_retriever_finds_health_chunks():
@@ -42,8 +44,35 @@ def test_chroma_hybrid_retriever_searches_with_bm25_fusion(tmp_path):
         retriever = ChromaHybridRetriever(persist_dir=tmp_path / "chroma", rebuild_on_start=True)
     except Exception as exc:
         pytest.skip(f"Chroma is installed but not available in this environment: {exc}")
-    hits = retriever.search("我坐了很久 肩膀僵硬 需要活动", top_k=3, filters={"category": "sedentary"})
+    try:
+        hits = retriever.search("我坐了很久 肩膀僵硬 需要活动", top_k=3, filters={"category": "sedentary"})
 
-    assert hits
-    assert all(hit.source == "sedentary_guidelines.md" for hit in hits)
-    assert all(hit.score >= 0 for hit in hits)
+        assert hits
+        assert all(hit.source == "sedentary_guidelines.md" for hit in hits)
+        assert all(hit.score >= 0 for hit in hits)
+    finally:
+        retriever.close()
+
+
+def test_auto_rag_backend_records_chroma_fallback(monkeypatch):
+    def unavailable_chroma(**_kwargs):
+        raise ChromaBackendError("Chroma persist dir is not writable")
+
+    monkeypatch.setattr(rag_tools, "ChromaHybridRetriever", unavailable_chroma)
+    settings = AgentRuntimeSettings(rag_backend="auto")
+
+    retriever = build_default_rag_retriever(settings)
+
+    assert isinstance(retriever, SimpleRetriever)
+    assert "not writable" in retriever.fallback_reason
+
+
+def test_forced_chroma_backend_raises_clear_error(monkeypatch):
+    def unavailable_chroma(**_kwargs):
+        raise ChromaBackendError("Chroma persist dir is not writable")
+
+    monkeypatch.setattr(rag_tools, "ChromaHybridRetriever", unavailable_chroma)
+    settings = AgentRuntimeSettings(rag_backend="chroma")
+
+    with pytest.raises(ChromaBackendError, match="not writable"):
+        build_default_rag_retriever(settings)

@@ -159,7 +159,7 @@ def finalize_node(state: AgentState) -> AgentState:
     if state.get("final_output"):
         return state
     if state.get("errors"):
-        summary = "Agent 运行未完成，已返回安全 fallback。"
+        summary = f"Agent 运行未完成，已返回安全 fallback。错误摘要：{_compact_error(state['errors'][0])}"
         recommendations: list[RecommendationOutput] = []
         confidence = 0.2
     else:
@@ -287,3 +287,8 @@ def _data_sources_used(state: AgentState) -> list[str]:
     if state.get("retrieved_chunks"):
         sources.add("rag")
     return sorted(sources)
+
+
+def _compact_error(error: Any) -> str:
+    text = str(error).replace("\n", " ").strip()
+    return text[:160] or "未知错误"

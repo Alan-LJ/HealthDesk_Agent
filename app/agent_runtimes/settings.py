@@ -96,6 +96,7 @@ class AgentRuntimeSettings(BaseModel):
     rag_hybrid_bm25_weight: float = Field(default=0.35, ge=0.0, le=1.0)
     rag_embedding_dimensions: int = Field(default=384, ge=32)
     rag_rebuild_on_start: bool = True
+    rag_chroma_reset_on_start: bool = False
     trace_to_sqlite: bool = True
 
     @property
@@ -126,5 +127,6 @@ def load_runtime_settings() -> AgentRuntimeSettings:
         rag_hybrid_bm25_weight=_env_float("RAG_HYBRID_BM25_WEIGHT", 0.35),
         rag_embedding_dimensions=_env_int("RAG_EMBEDDING_DIMENSIONS", 384),
         rag_rebuild_on_start=_env_bool("RAG_REBUILD_ON_START", True),
+        rag_chroma_reset_on_start=_env_bool("RAG_CHROMA_RESET_ON_START", False),
         trace_to_sqlite=_env_bool("TRACE_TO_SQLITE", True),
     )

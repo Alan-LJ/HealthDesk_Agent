@@ -28,13 +28,14 @@ class SimpleRetriever:
     生产环境可以把这个类替换成 FAISS、Milvus 或云向量数据库，Agent 层无需大改。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, fallback_reason: str | None = None) -> None:
         self.chunk_records = chunk_markdown_documents()
         self.chunks = [
             KnowledgeChunk(source=chunk.source, chunk_text=chunk.chunk_text, score=0.0)
             for chunk in self.chunk_records
         ]
         self.backend_name = "simple_keyword"
+        self.fallback_reason = fallback_reason
 
     def search(self, query: str, top_k: int = 3, filters: dict[str, Any] | None = None) -> list[KnowledgeChunk]:
         """检索与 query 最相关的 top_k 个知识片段。"""

@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import math
+import shutil
 from pathlib import Path
 from typing import Any
 
 from app.rag.bm25 import BM25Index
 from app.rag.chunking import KB_DIR, RagChunk, chunk_markdown_documents, tokenize_rag_text
 from app.schemas.common import KnowledgeChunk
+
+
+class ChromaBackendError(RuntimeError):
+    """Chroma 后端不可用时抛出的清晰运行时错误。"""
 
 
 class HashingEmbeddingFunction:
@@ -20,11 +25,44 @@ class HashingEmbeddingFunction:
     def __init__(self, dimensions: int = 384) -> None:
         self.dimensions = dimensions
 
-    def name(self) -> str:
-        return f"healthdesk_hashing_embedding_{self.dimensions}"
+    @staticmethod
+    def name() -> str:
+        return "healthdesk_hashing_embedding"
 
-    def __call__(self, input: list[str]) -> list[list[float]]:  # noqa: A002 - Chroma requires this argument name.
-        return [self._embed(text) for text in input]
+    def get_config(self) -> dict[str, int]:
+        return {"dimensions": self.dimensions}
+
+    @staticmethod
+    def build_from_config(config: dict[str, Any]) -> "HashingEmbeddingFunction":
+        return HashingEmbeddingFunction(dimensions=int(config.get("dimensions", 384)))
+
+    @staticmethod
+    def validate_config(config: dict[str, Any]) -> None:
+        dimensions = int(config.get("dimensions", 384))
+        if dimensions < 32:
+            raise ValueError("HashingEmbeddingFunction dimensions must be >= 32")
+
+    def default_space(self) -> str:
+        return "cosine"
+
+    def supported_spaces(self) -> list[str]:
+        return ["cosine", "l2", "ip"]
+
+    def is_legacy(self) -> bool:
+        return False
+
+    def __call__(self, input: list[str] | str) -> list[list[float]]:  # noqa: A002 - Chroma requires this argument name.
+        return [self._embed(text) for text in _as_text_list(input)]
+
+    def embed_query(self, input: list[str] | str) -> list[list[float]]:  # noqa: A002 - Chroma calls this keyword.
+        """Chroma 1.x query path calls embed_query(input=...)."""
+
+        return self(input)
+
+    def embed_documents(self, input: list[str] | str) -> list[list[float]]:  # noqa: A002 - Chroma compatibility.
+        """Compatibility with embedding-function interfaces that split query/docs."""
+
+        return self(input)
 
     def _embed(self, text: str) -> list[float]:
         vector = [0.0] * self.dimensions
@@ -54,6 +92,7 @@ class ChromaHybridRetriever:
         bm25_weight: float = 0.35,
         embedding_dimensions: int = 384,
         rebuild_on_start: bool = True,
+        reset_on_start: bool = False,
     ) -> None:
         self.persist_dir = Path(persist_dir)
         self.collection_name = collection_name
@@ -63,10 +102,31 @@ class ChromaHybridRetriever:
         self.chunks = chunk_markdown_documents(kb_dir)
         self.chunk_by_id = {chunk.id: chunk for chunk in self.chunks}
         self.bm25 = BM25Index(self.chunks)
+        if reset_on_start:
+            self.reset_persist_dir()
+        self._ensure_persist_dir_writable()
         self.client = self._build_client()
         self.collection = self._get_collection()
         if rebuild_on_start or self._collection_is_empty():
             self.rebuild()
+
+    def reset_persist_dir(self) -> None:
+        """删除并重建 Chroma 持久化目录。
+
+        Chroma 索引是由本地 Markdown 知识库派生出的缓存；当旧索引损坏、
+        SQLite 文件权限异常或版本升级后不兼容时，可以安全重建。
+        """
+
+        if self.persist_dir.exists():
+            try:
+                shutil.rmtree(self.persist_dir)
+            except OSError as exc:
+                raise ChromaBackendError(
+                    f"无法重置 Chroma 持久化目录 {self.persist_dir}。"
+                    "请确认没有其他 Python/uvicorn/桌宠进程正在占用该目录，"
+                    "或手动删除该目录后重试。"
+                ) from exc
+        self.persist_dir.mkdir(parents=True, exist_ok=True)
 
     def rebuild(self) -> None:
         """重建 Chroma collection，确保 Markdown 与向量索引一致。"""
@@ -79,11 +139,17 @@ class ChromaHybridRetriever:
         self.collection = self._get_collection()
         if not self.chunks:
             return
-        self.collection.upsert(
-            ids=[chunk.id for chunk in self.chunks],
-            documents=[chunk.chunk_text for chunk in self.chunks],
-            metadatas=[chunk.metadata for chunk in self.chunks],
-        )
+        try:
+            self.collection.upsert(
+                ids=[chunk.id for chunk in self.chunks],
+                documents=[chunk.chunk_text for chunk in self.chunks],
+                metadatas=[chunk.metadata for chunk in self.chunks],
+            )
+        except Exception as exc:
+            raise ChromaBackendError(
+                f"写入 Chroma collection 失败: {exc}。"
+                "可尝试运行 `python scripts\\rebuild_rag_index.py --reset` 重建索引。"
+            ) from exc
 
     def search(self, query: str, top_k: int = 3, filters: dict[str, Any] | None = None) -> list[KnowledgeChunk]:
         """执行向量相似度检索 + BM25 融合。"""
@@ -119,8 +185,29 @@ class ChromaHybridRetriever:
         try:
             import chromadb
         except ImportError as exc:
-            raise RuntimeError("未安装 chromadb，无法启用 Chroma RAG。请运行: pip install chromadb") from exc
-        return chromadb.PersistentClient(path=str(self.persist_dir))
+            raise ChromaBackendError("未安装 chromadb，无法启用 Chroma RAG。请运行: pip install chromadb") from exc
+        try:
+            return chromadb.PersistentClient(path=str(self.persist_dir))
+        except Exception as exc:
+            raise ChromaBackendError(
+                f"启动 Chroma PersistentClient 失败: {exc}。"
+                f"当前路径: {self.persist_dir}。"
+                "请确认该目录可写、没有被其他进程占用；如旧索引损坏，"
+                "运行 `python scripts\\rebuild_rag_index.py --reset` 后再启动服务。"
+            ) from exc
+
+    def _ensure_persist_dir_writable(self) -> None:
+        try:
+            self.persist_dir.mkdir(parents=True, exist_ok=True)
+            probe = self.persist_dir / ".healthdesk_write_test"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+        except OSError as exc:
+            raise ChromaBackendError(
+                f"Chroma 持久化目录不可写: {self.persist_dir}。"
+                "请检查目录权限，关闭可能占用索引的 Python/uvicorn/桌宠进程，"
+                "或设置 RAG_CHROMA_PATH 到当前用户可写目录。"
+            ) from exc
 
     def _get_collection(self) -> Any:
         return self.client.get_or_create_collection(
@@ -142,8 +229,11 @@ class ChromaHybridRetriever:
                 n_results=min(len(self.chunks), max(candidate_limit, 1)),
                 include=["distances"],
             )
-        except Exception:
-            return {}
+        except Exception as exc:
+            raise ChromaBackendError(
+                f"Chroma 向量查询失败: {exc}。"
+                "当前强制向量库模式不会静默退回关键词检索，请先修复 Chroma 索引。"
+            ) from exc
         ids = (result.get("ids") or [[]])[0]
         distances = (result.get("distances") or [[]])[0]
         scores: dict[str, float] = {}
@@ -169,6 +259,21 @@ class ChromaHybridRetriever:
             selected.append(chunk)
         return selected
 
+    def close(self) -> None:
+        """释放 Chroma 客户端资源，避免测试或短命令进程悬挂。"""
+
+        client = getattr(self, "client", None)
+        if client is None:
+            return
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+            return
+        system = getattr(client, "_system", None)
+        stop = getattr(system, "stop", None)
+        if callable(stop):
+            stop()
+
 
 def _embedding_tokens(text: str) -> list[str]:
     tokens = tokenize_rag_text(text)
@@ -176,6 +281,12 @@ def _embedding_tokens(text: str) -> list[str]:
     tokens.extend(compact[index : index + 2] for index in range(max(len(compact) - 1, 0)))
     tokens.extend(compact[index : index + 3] for index in range(max(len(compact) - 2, 0)))
     return [token for token in tokens if token.strip()]
+
+
+def _as_text_list(value: list[str] | str) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    return [str(item) for item in value]
 
 
 def re_space(text: str) -> str:

@@ -93,6 +93,7 @@ Markdown 文档
 ```text
 RAG_HYBRID_VECTOR_WEIGHT=0.65
 RAG_HYBRID_BM25_WEIGHT=0.35
+RAG_CHROMA_RESET_ON_START=false
 ```
 
 知识库 category 会用于过滤不同工具的检索范围：
@@ -107,6 +108,12 @@ search_device_docs      -> device
 
 ```powershell
 python scripts\rebuild_rag_index.py
+```
+
+如果旧索引文件不可写、损坏，或 Chroma 报出 `attempt to write a readonly database`，可以重置后重建：
+
+```powershell
+python scripts\rebuild_rag_index.py --reset
 ```
 
 当前开源版本为了避免额外模型下载，内置了一个 deterministic hashing embedding function，适合本地演示和 CI。后续可以替换为 bge-m3、sentence-transformers 或云端 embedding 模型，Agent 工具接口不需要变化。
@@ -201,6 +208,7 @@ RAG_HYBRID_VECTOR_WEIGHT=0.65
 RAG_HYBRID_BM25_WEIGHT=0.35
 RAG_EMBEDDING_DIMENSIONS=384
 RAG_REBUILD_ON_START=true
+RAG_CHROMA_RESET_ON_START=false
 TRACE_TO_SQLITE=true
 
 HEALTHDESK_PET_VIEW=dashboard

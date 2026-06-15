@@ -5,7 +5,7 @@ from typing import Any, Protocol
 from app.agent_tools.local_tool import LocalToolBinding, make_tool
 from app.agent_tools.tool_schemas import SearchKnowledgeInput, ToolObservation
 from app.rag.simple_retriever import SimpleRetriever
-from app.rag.vector_retriever import ChromaHybridRetriever
+from app.rag.vector_retriever import ChromaBackendError, ChromaHybridRetriever
 
 
 class RagRetriever(Protocol):
@@ -29,6 +29,7 @@ def _chunks_to_payload(chunks: list) -> list[dict]:
 
 def search_health_knowledge_handler(retriever: RagRetriever, data: SearchKnowledgeInput) -> ToolObservation:
     chunks = retriever.search(data.query, top_k=data.top_k, filters={"category": ["sedentary", "hydration", "environment"]})
+    fallback_reason = getattr(retriever, "fallback_reason", None)
     return ToolObservation(
         tool_name="search_health_knowledge",
         summary=f"检索到 {len(chunks)} 条健康知识片段。RAG 只提供外部知识，不代表用户当前状态。",
@@ -38,6 +39,7 @@ def search_health_knowledge_handler(retriever: RagRetriever, data: SearchKnowled
             "top_k": data.top_k,
             "rag_boundary": "knowledge_only",
             "retriever_backend": getattr(retriever, "backend_name", "unknown"),
+            "retriever_fallback_reason": fallback_reason,
         },
     )
 
@@ -45,6 +47,7 @@ def search_health_knowledge_handler(retriever: RagRetriever, data: SearchKnowled
 def search_pet_templates_handler(retriever: RagRetriever, data: SearchKnowledgeInput) -> ToolObservation:
     query = f"桌宠 话术 模板 {data.query}"
     chunks = retriever.search(query, top_k=data.top_k, filters={"category": "pet_dialogue"})
+    fallback_reason = getattr(retriever, "fallback_reason", None)
     return ToolObservation(
         tool_name="search_pet_templates",
         summary=f"检索到 {len(chunks)} 条桌宠话术片段。",
@@ -54,6 +57,7 @@ def search_pet_templates_handler(retriever: RagRetriever, data: SearchKnowledgeI
             "top_k": data.top_k,
             "rag_boundary": "templates_only",
             "retriever_backend": getattr(retriever, "backend_name", "unknown"),
+            "retriever_fallback_reason": fallback_reason,
         },
     )
 
@@ -61,6 +65,7 @@ def search_pet_templates_handler(retriever: RagRetriever, data: SearchKnowledgeI
 def search_device_docs_handler(retriever: RagRetriever, data: SearchKnowledgeInput) -> ToolObservation:
     query = f"设备 降级 置信度 {data.query}"
     chunks = retriever.search(query, top_k=data.top_k, filters={"category": "device"})
+    fallback_reason = getattr(retriever, "fallback_reason", None)
     return ToolObservation(
         tool_name="search_device_docs",
         summary=f"检索到 {len(chunks)} 条设备说明片段。",
@@ -70,6 +75,7 @@ def search_device_docs_handler(retriever: RagRetriever, data: SearchKnowledgeInp
             "top_k": data.top_k,
             "rag_boundary": "device_docs_only",
             "retriever_backend": getattr(retriever, "backend_name", "unknown"),
+            "retriever_fallback_reason": fallback_reason,
         },
     )
 
@@ -121,8 +127,14 @@ def build_default_rag_retriever(settings: Any | None = None) -> RagRetriever:
                 bm25_weight=settings.rag_hybrid_bm25_weight,
                 embedding_dimensions=settings.rag_embedding_dimensions,
                 rebuild_on_start=settings.rag_rebuild_on_start,
+                reset_on_start=settings.rag_chroma_reset_on_start,
             )
-        except Exception:
+        except ChromaBackendError as exc:
             if backend != "auto":
                 raise
+            return SimpleRetriever(fallback_reason=str(exc))
+        except Exception as exc:
+            if backend != "auto":
+                raise
+            return SimpleRetriever(fallback_reason=f"Chroma RAG 初始化失败: {exc}")
     return SimpleRetriever()
