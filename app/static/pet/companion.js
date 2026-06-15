@@ -20,7 +20,7 @@ const sizePresets = {
   small: { label: "小", scale: 0.85 },
   medium: { label: "中", scale: 1 },
   large: { label: "大", scale: 1.25 },
-  xlarge: { label: "超大", scale: 2.5 },
+  xlarge: { label: "超大", scale: 2 },
 };
 const petSprites = {
   normal: null,

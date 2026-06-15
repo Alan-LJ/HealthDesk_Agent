@@ -32,7 +32,13 @@ SIZE_PRESETS = {
     "small": 0.85,
     "medium": 1.0,
     "large": 1.25,
-    "xlarge": 2.5,
+    "xlarge": 2.0,
+}
+PET_HEAD_GAP_PRESETS = {
+    "small": 42,
+    "medium": 64,
+    "large": 84,
+    "xlarge": 112,
 }
 DEFAULT_SIZE_PRESET = "medium"
 
@@ -125,13 +131,17 @@ class DesktopCompanion:
         self.canvas_h = self._scaled(BASE_CANVAS_H)
         self.pet_size = self._scaled(BASE_PET_SIZE)
         self.pet_center_x = self._scaled(BASE_PET_CENTER_X)
-        self.pet_center_y = self._scaled(BASE_PET_CENTER_Y)
-        self.name_y = self._scaled(BASE_NAME_Y)
-        self.heart_source_y = self._scaled(BASE_HEART_SOURCE_Y)
         self.dialog_x = self._scaled(BASE_DIALOG_X)
         self.dialog_y = self._scaled(BASE_DIALOG_Y)
         self.dialog_w = self._scaled(BASE_DIALOG_W)
-        self.dialog_h = self._scaled(BASE_DIALOG_H)
+        self.dialog_h = BASE_DIALOG_H
+        self.pet_head_gap = PET_HEAD_GAP_PRESETS.get(
+            getattr(self, "size_preset", DEFAULT_SIZE_PRESET),
+            PET_HEAD_GAP_PRESETS[DEFAULT_SIZE_PRESET],
+        )
+        self.pet_center_y = self.dialog_y + self.dialog_h + self.pet_head_gap + self.pet_size // 2
+        self.name_y = self.pet_center_y + self._scaled_delta(BASE_NAME_Y - BASE_PET_CENTER_Y)
+        self.heart_source_y = self.pet_center_y + self._scaled_delta(BASE_HEART_SOURCE_Y - BASE_PET_CENTER_Y)
         self.name_font_size = max(10, self._scaled(13))
         self.heart_min_size = max(10, self._scaled(12))
         self.heart_max_size = max(self.heart_min_size + 2, self._scaled(22))
@@ -142,6 +152,9 @@ class DesktopCompanion:
 
     def _scaled(self, value: int | float) -> int:
         return max(1, int(round(float(value) * self.scale)))
+
+    def _scaled_delta(self, value: int | float) -> int:
+        return int(round(float(value) * self.scale))
 
     @staticmethod
     def _load_saved_size_preset() -> str:
