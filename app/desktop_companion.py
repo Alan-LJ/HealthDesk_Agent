@@ -13,17 +13,27 @@ from typing import Any
 
 
 TRANSPARENT = "#01FF01"
-PET_SIZE = 180
-CANVAS_W = 380
-CANVAS_H = 520
-PET_CENTER_X = CANVAS_W // 2
-PET_CENTER_Y = 345
-NAME_Y = 466
-HEART_SOURCE_Y = 246
+BASE_PET_SIZE = 180
+BASE_CANVAS_W = 380
+BASE_CANVAS_H = 520
+BASE_PET_CENTER_X = BASE_CANVAS_W // 2
+BASE_PET_CENTER_Y = 345
+BASE_NAME_Y = 466
+BASE_HEART_SOURCE_Y = 246
+BASE_DIALOG_X = 20
+BASE_DIALOG_Y = 20
+BASE_DIALOG_W = 340
+BASE_DIALOG_H = 168
 GREEN_THRESHOLD = 100
 DRAG_DEAD_ZONE = 3
 VISIBLE_MARGIN = 48
 HEART_COLORS = ["#FF4D6D", "#FF6B8A", "#FF85A1", "#FF3366", "#FF80AB", "#F06292", "#E91E63"]
+SIZE_PRESETS = {
+    "small": 0.85,
+    "medium": 1.0,
+    "large": 1.25,
+}
+DEFAULT_SIZE_PRESET = "medium"
 
 SM_XVIRTUALSCREEN = 76
 SM_YVIRTUALSCREEN = 77
@@ -40,6 +50,10 @@ class DesktopCompanion:
     """Windows desktop companion using a transparent borderless tkinter window."""
 
     def __init__(self) -> None:
+        self.size_preset = self._load_saved_size_preset()
+        self.scale = SIZE_PRESETS[self.size_preset]
+        self._sync_layout_metrics()
+
         self.root = tk.Tk()
         self.root.title("HealthDesk Agent Companion")
         self.root.overrideredirect(True)
@@ -49,8 +63,8 @@ class DesktopCompanion:
 
         self.canvas = tk.Canvas(
             self.root,
-            width=CANVAS_W,
-            height=CANVAS_H,
+            width=self.canvas_w,
+            height=self.canvas_h,
             bg=TRANSPARENT,
             highlightthickness=0,
             bd=0,
@@ -60,20 +74,20 @@ class DesktopCompanion:
         self.img_normal = self._load_pet_image(PET_ASSET_DIR / "corgi_normal.png")
         self.img_excited = self._load_pet_image(PET_ASSET_DIR / "corgi_ears_up.png")
         self.current_excited = False
-        self.pet_image_id = self.canvas.create_image(PET_CENTER_X, PET_CENTER_Y, image=self.img_normal, tags=("pet",))
+        self.pet_image_id = self.canvas.create_image(self.pet_center_x, self.pet_center_y, image=self.img_normal, tags=("pet",))
         self.name_id = self.canvas.create_text(
-            PET_CENTER_X,
-            NAME_Y,
+            self.pet_center_x,
+            self.name_y,
             text="小灵",
             fill="#15df2a",
-            font=("Microsoft YaHei UI", 13, "bold"),
+            font=("Microsoft YaHei UI", self.name_font_size, "bold"),
             tags=("pet",),
         )
         self.shadow_id = self.canvas.create_oval(
-            PET_CENTER_X - 72,
-            PET_CENTER_Y + 82,
-            PET_CENTER_X + 72,
-            PET_CENTER_Y + 102,
+            self.pet_center_x - self.shadow_w,
+            self.pet_center_y + self.shadow_top,
+            self.pet_center_x + self.shadow_w,
+            self.pet_center_y + self.shadow_bottom,
             fill="#18232b",
             outline="",
             stipple="gray25",
@@ -104,6 +118,45 @@ class DesktopCompanion:
 
     def run(self) -> None:
         self.root.mainloop()
+
+    def _sync_layout_metrics(self) -> None:
+        self.canvas_w = self._scaled(BASE_CANVAS_W)
+        self.canvas_h = self._scaled(BASE_CANVAS_H)
+        self.pet_size = self._scaled(BASE_PET_SIZE)
+        self.pet_center_x = self._scaled(BASE_PET_CENTER_X)
+        self.pet_center_y = self._scaled(BASE_PET_CENTER_Y)
+        self.name_y = self._scaled(BASE_NAME_Y)
+        self.heart_source_y = self._scaled(BASE_HEART_SOURCE_Y)
+        self.dialog_x = self._scaled(BASE_DIALOG_X)
+        self.dialog_y = self._scaled(BASE_DIALOG_Y)
+        self.dialog_w = self._scaled(BASE_DIALOG_W)
+        self.dialog_h = self._scaled(BASE_DIALOG_H)
+        self.name_font_size = max(10, self._scaled(13))
+        self.heart_min_size = max(10, self._scaled(12))
+        self.heart_max_size = max(self.heart_min_size + 2, self._scaled(22))
+        self.heart_x_spread = self._scaled(38)
+        self.shadow_w = self._scaled(72)
+        self.shadow_top = self._scaled(82)
+        self.shadow_bottom = self._scaled(102)
+
+    def _scaled(self, value: int | float) -> int:
+        return max(1, int(round(float(value) * self.scale)))
+
+    @staticmethod
+    def _load_saved_size_preset() -> str:
+        if not POSITION_FILE.exists():
+            return DEFAULT_SIZE_PRESET
+        try:
+            data = json.loads(POSITION_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return DEFAULT_SIZE_PRESET
+        size = data.get("size")
+        if isinstance(size, str) and size in SIZE_PRESETS:
+            return size
+        scale = data.get("scale")
+        if isinstance(scale, (int, float)):
+            return min(SIZE_PRESETS, key=lambda preset: abs(SIZE_PRESETS[preset] - float(scale)))
+        return DEFAULT_SIZE_PRESET
 
     def _build_dialog(self) -> None:
         frame = tk.Frame(self.canvas, bg="#ffffff", highlightbackground="#75d6d0", highlightthickness=1)
@@ -161,7 +214,15 @@ class DesktopCompanion:
         self.send_button.grid(row=0, column=1, sticky="e")
 
         self.dialog_frame = frame
-        self.dialog_window_id = self.canvas.create_window(20, 20, width=340, height=168, anchor="nw", window=frame, state="hidden")
+        self.dialog_window_id = self.canvas.create_window(
+            self.dialog_x,
+            self.dialog_y,
+            width=self.dialog_w,
+            height=self.dialog_h,
+            anchor="nw",
+            window=frame,
+            state="hidden",
+        )
 
     def _bind_events(self) -> None:
         for sequence in ("<ButtonPress-1>", "<B1-Motion>", "<ButtonRelease-1>"):
@@ -195,9 +256,9 @@ class DesktopCompanion:
                     elif g > 100 and g - r > 50 and g - b > 50:
                         green_ratio = min(1.0, max(0.0, (g - max(r, b)) / 100.0))
                         pixels[x, y] = (r, min(g, int((r + b) / 2 + 12)), b, int(a * (1 - green_ratio)))
-            img.thumbnail((PET_SIZE, PET_SIZE), Image.LANCZOS)
-            layer = Image.new("RGBA", (PET_SIZE, PET_SIZE), (0, 0, 0, 0))
-            layer.paste(img, ((PET_SIZE - img.width) // 2, (PET_SIZE - img.height) // 2), img)
+            img.thumbnail((self.pet_size, self.pet_size), Image.LANCZOS)
+            layer = Image.new("RGBA", (self.pet_size, self.pet_size), (0, 0, 0, 0))
+            layer.paste(img, ((self.pet_size - img.width) // 2, (self.pet_size - img.height) // 2), img)
             return ImageTk.PhotoImage(layer)
         except Exception as exc:
             raise RuntimeError(f"Failed to load pet image: {path}") from exc
@@ -211,7 +272,7 @@ class DesktopCompanion:
 
     def _load_pet_image_tk(self, path: Path) -> tk.PhotoImage:
         source = tk.PhotoImage(file=str(path))
-        scale = max(1, round(max(source.width(), source.height()) / PET_SIZE))
+        scale = max(1, round(max(source.width(), source.height()) / self.pet_size))
         small = source.subsample(scale, scale)
         output = tk.PhotoImage(width=small.width(), height=small.height())
         for y in range(small.height()):
@@ -238,8 +299,8 @@ class DesktopCompanion:
 
     def _restore_position(self) -> None:
         _left, _top, right, bottom = self._virtual_screen_bounds()
-        x = right - CANVAS_W - 80
-        y = bottom - CANVAS_H - 80
+        x = right - self.canvas_w - 80
+        y = bottom - self.canvas_h - 80
         if POSITION_FILE.exists():
             try:
                 data = json.loads(POSITION_FILE.read_text(encoding="utf-8"))
@@ -248,19 +309,27 @@ class DesktopCompanion:
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 pass
         x, y = self._clamp_position(x, y)
-        self.root.geometry(f"{CANVAS_W}x{CANVAS_H}{self._geometry_offset(x, y)}")
+        self._apply_window_geometry(x, y)
 
     def _save_position(self) -> None:
         POSITION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        data = {"x": self.root.winfo_x(), "y": self.root.winfo_y()}
+        data = {
+            "x": self.root.winfo_x(),
+            "y": self.root.winfo_y(),
+            "size": self.size_preset,
+            "scale": self.scale,
+        }
         POSITION_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _clamp_position(self, x: int, y: int) -> tuple[int, int]:
         left, top, right, bottom = self._virtual_screen_bounds()
         return (
-            max(left - CANVAS_W + VISIBLE_MARGIN, min(x, right - VISIBLE_MARGIN)),
-            max(top - CANVAS_H + VISIBLE_MARGIN, min(y, bottom - VISIBLE_MARGIN)),
+            max(left - self.canvas_w + VISIBLE_MARGIN, min(x, right - VISIBLE_MARGIN)),
+            max(top - self.canvas_h + VISIBLE_MARGIN, min(y, bottom - VISIBLE_MARGIN)),
         )
+
+    def _apply_window_geometry(self, x: int, y: int) -> None:
+        self.root.geometry(f"{self.canvas_w}x{self.canvas_h}{self._geometry_offset(x, y)}")
 
     def _virtual_screen_bounds(self) -> tuple[int, int, int, int]:
         if sys.platform.startswith("win"):
@@ -319,6 +388,44 @@ class DesktopCompanion:
     def _set_image(self, *, excited: bool) -> None:
         self.current_excited = excited
         self.canvas.itemconfig(self.pet_image_id, image=self.img_excited if excited else self.img_normal)
+
+    def _set_size_preset(self, preset: str) -> None:
+        if preset not in SIZE_PRESETS or preset == self.size_preset:
+            return
+
+        current_x = self.root.winfo_x()
+        current_y = self.root.winfo_y()
+        self.size_preset = preset
+        self.scale = SIZE_PRESETS[preset]
+        self._sync_layout_metrics()
+
+        self.img_normal = self._load_pet_image(PET_ASSET_DIR / "corgi_normal.png")
+        self.img_excited = self._load_pet_image(PET_ASSET_DIR / "corgi_ears_up.png")
+        self.canvas.config(width=self.canvas_w, height=self.canvas_h)
+        self.canvas.coords(self.pet_image_id, self.pet_center_x, self.pet_center_y)
+        self.canvas.itemconfig(self.pet_image_id, image=self.img_excited if self.current_excited else self.img_normal)
+        self.canvas.coords(self.name_id, self.pet_center_x, self.name_y)
+        self.canvas.itemconfig(self.name_id, font=("Microsoft YaHei UI", self.name_font_size, "bold"))
+        self.canvas.coords(
+            self.shadow_id,
+            self.pet_center_x - self.shadow_w,
+            self.pet_center_y + self.shadow_top,
+            self.pet_center_x + self.shadow_w,
+            self.pet_center_y + self.shadow_bottom,
+        )
+        if self.dialog_window_id is not None:
+            self.canvas.coords(self.dialog_window_id, self.dialog_x, self.dialog_y)
+            self.canvas.itemconfig(self.dialog_window_id, width=self.dialog_w, height=self.dialog_h)
+
+        for heart in self.hearts:
+            self.canvas.delete(heart["id"])
+        self.hearts = []
+        self.animating_hearts = False
+        self.bounce_offsets = []
+
+        x, y = self._clamp_position(current_x, current_y)
+        self._apply_window_geometry(x, y)
+        self._save_position()
 
     def _show_dialog(self) -> None:
         self._cancel_reply_timer()
@@ -432,9 +539,9 @@ class DesktopCompanion:
             self.root.after(40, self._animate_hearts)
 
     def _create_heart(self) -> None:
-        x = PET_CENTER_X + random.uniform(-38, 38)
-        y = HEART_SOURCE_Y + random.uniform(-8, 26)
-        size = random.randint(12, 22)
+        x = self.pet_center_x + random.uniform(-self.heart_x_spread, self.heart_x_spread)
+        y = self.heart_source_y + random.uniform(-self._scaled(8), self._scaled(26))
+        size = random.randint(self.heart_min_size, self.heart_max_size)
         item = self.canvas.create_text(
             x,
             y,
@@ -479,14 +586,14 @@ class DesktopCompanion:
     def _bounce_pet(self) -> None:
         if self.bounce_offsets:
             return
-        self.bounce_offsets = [-10, -5, 4, 3, 0]
+        self.bounce_offsets = [-self._scaled(10), -self._scaled(5), self._scaled(4), self._scaled(3), 0]
         self._apply_next_bounce()
 
     def _apply_next_bounce(self) -> None:
         if not self.bounce_offsets:
             return
         offset = self.bounce_offsets.pop(0)
-        self.canvas.coords(self.pet_image_id, PET_CENTER_X, PET_CENTER_Y + offset)
+        self.canvas.coords(self.pet_image_id, self.pet_center_x, self.pet_center_y + offset)
         if offset == 0:
             return
         self.root.after(70, self._apply_next_bounce)
@@ -495,9 +602,17 @@ class DesktopCompanion:
         menu = tk.Menu(self.root, tearoff=0, font=("Microsoft YaHei UI", 10))
         menu.add_command(label="摸摸小灵", command=self._click_reaction)
         menu.add_command(label="隐藏对话", command=self._hide_dialog)
+        size_menu = tk.Menu(menu, tearoff=0, font=("Microsoft YaHei UI", 10))
+        size_menu.add_command(label="小", command=lambda: self._set_size_preset("small"))
+        size_menu.add_command(label="中", command=lambda: self._set_size_preset("medium"))
+        size_menu.add_command(label="大", command=lambda: self._set_size_preset("large"))
+        menu.add_cascade(label=f"大小：{self._size_label()}", menu=size_menu)
         menu.add_separator()
         menu.add_command(label="再见", command=self.root.destroy)
         menu.tk_popup(int(event.x_root), int(event.y_root))
+
+    def _size_label(self) -> str:
+        return {"small": "小", "medium": "中", "large": "大"}.get(self.size_preset, "中")
 
 
 def main() -> None:

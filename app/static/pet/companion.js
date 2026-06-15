@@ -9,10 +9,18 @@ const dialogStatus = document.querySelector("#dialogStatus");
 const replyBox = document.querySelector("#replyBox");
 const heartLayer = document.querySelector("#heartLayer");
 const petCanvas = document.querySelector("#petCanvas");
+const sizeButtons = Array.from(document.querySelectorAll("[data-size-preset]"));
 
 const positionKey = "healthdesk.companion.position";
+const sizeKey = "healthdesk.companion.size";
 const heartColors = ["#ff4d6d", "#ff6b8a", "#ff85a1", "#ff3366", "#ff80ab", "#f06292", "#e91e63"];
 const petSpriteSize = 220;
+const sizePresetOrder = ["small", "medium", "large"];
+const sizePresets = {
+  small: { label: "小", scale: 0.85 },
+  medium: { label: "中", scale: 1 },
+  large: { label: "大", scale: 1.25 },
+};
 const petSprites = {
   normal: null,
   excited: null,
@@ -21,21 +29,30 @@ const petSprites = {
 let dragging = null;
 let isBusy = false;
 let activePetState = "normal";
+let activeSizePreset = loadSizePreset();
 let petSpriteReady = false;
 let reactionTimer = null;
 let hideReplyTimer = null;
 let lastWakeAt = 0;
 
+applySizePreset(activeSizePreset, { persist: false, clamp: false });
 initWidgetPosition();
 initPetSprite();
 
 petWidget.addEventListener("pointerdown", startDrag);
+petWidget.addEventListener("contextmenu", cycleSizeFromContextMenu);
 petDialog.addEventListener("pointerdown", stopDialogEvent);
 petDialog.addEventListener("click", stopDialogEvent);
 window.addEventListener("resize", clampWidgetPosition);
 
 closeDialog.addEventListener("click", () => {
   hideDialog();
+});
+
+sizeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setSizePresetFromControl(button.dataset.sizePreset);
+  });
 });
 
 chatForm.addEventListener("submit", async (event) => {
@@ -49,6 +66,74 @@ chatInput.addEventListener("keydown", (event) => {
     chatForm.requestSubmit();
   }
 });
+
+function loadSizePreset() {
+  const saved = localStorage.getItem(sizeKey);
+  return sizePresets[saved] ? saved : "medium";
+}
+
+function applySizePreset(preset, options = {}) {
+  const nextPreset = sizePresets[preset] ? preset : "medium";
+  const scale = sizePresets[nextPreset].scale;
+  const px = (value) => `${Math.round(value * scale)}px`;
+
+  activeSizePreset = nextPreset;
+  petWidget.dataset.size = nextPreset;
+  syncSizeButtons();
+  petWidget.style.setProperty("--pet-widget-width", px(220));
+  petWidget.style.setProperty("--pet-widget-height", px(300));
+  petWidget.style.setProperty("--pet-visual-size", px(220));
+  petWidget.style.setProperty("--pet-visual-bottom", px(28));
+  petWidget.style.setProperty("--pet-dialog-bottom", px(250));
+  petWidget.style.setProperty("--pet-dialog-width", px(340));
+  petWidget.style.setProperty("--pet-name-font-size", px(13));
+  petWidget.style.setProperty("--pet-heart-inset", `${px(-72)} ${px(-34)} 0`);
+
+  if (options.persist) {
+    localStorage.setItem(sizeKey, nextPreset);
+  }
+  if (options.clamp) {
+    window.requestAnimationFrame(() => {
+      clampWidgetPosition();
+      saveWidgetPosition();
+    });
+  }
+}
+
+function syncSizeButtons() {
+  sizeButtons.forEach((button) => {
+    const isActive = button.dataset.sizePreset === activeSizePreset;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
+  });
+}
+
+function setSizePresetFromControl(preset) {
+  if (!sizePresets[preset]) {
+    return;
+  }
+  applySizePreset(preset, { persist: true, clamp: true });
+  triggerPetReaction();
+  dialogStatus.textContent = `大小：${sizePresets[preset].label}`;
+}
+
+function cycleSizeFromContextMenu(event) {
+  if (petDialog.contains(event.target)) {
+    return;
+  }
+  event.preventDefault();
+  const currentIndex = sizePresetOrder.indexOf(activeSizePreset);
+  const nextPreset = sizePresetOrder[(currentIndex + 1) % sizePresetOrder.length];
+  applySizePreset(nextPreset, { persist: true, clamp: true });
+  triggerPetReaction();
+  if (!petDialog.classList.contains("hidden")) {
+    dialogStatus.textContent = `大小：${sizePresets[nextPreset].label}`;
+  }
+}
+
+function currentPetScale() {
+  return sizePresets[activeSizePreset]?.scale || 1;
+}
 
 function stopDialogEvent(event) {
   event.stopPropagation();
@@ -181,6 +266,9 @@ async function postJson(url, payload) {
 }
 
 function startDrag(event) {
+  if (event.button !== 0) {
+    return;
+  }
   if (petDialog.contains(event.target)) {
     return;
   }
@@ -293,12 +381,13 @@ function createHeart() {
   const heart = document.createElement("span");
   heart.className = "heart-particle";
   heart.textContent = "\u2665";
-  const startX = randomBetween(-42, 42);
-  const startY = randomBetween(10, 48);
-  const endX = startX + randomBetween(-58, 58);
-  const endY = startY - randomBetween(96, 148);
+  const scale = currentPetScale();
+  const startX = randomBetween(-42, 42) * scale;
+  const startY = randomBetween(10, 48) * scale;
+  const endX = startX + randomBetween(-58, 58) * scale;
+  const endY = startY - randomBetween(96, 148) * scale;
   heart.style.setProperty("--heart-color", heartColors[Math.floor(Math.random() * heartColors.length)]);
-  heart.style.setProperty("--heart-size", `${Math.round(randomBetween(14, 24))}px`);
+  heart.style.setProperty("--heart-size", `${Math.round(randomBetween(14, 24) * scale)}px`);
   heart.style.setProperty("--heart-duration", `${Math.round(randomBetween(980, 1420))}ms`);
   heart.style.setProperty("--heart-x", `${Math.round(startX)}px`);
   heart.style.setProperty("--heart-y", `${Math.round(startY)}px`);

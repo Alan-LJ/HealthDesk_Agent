@@ -45,8 +45,8 @@ textarea {
   position: fixed;
   left: 0;
   top: 0;
-  width: 220px;
-  height: 300px;
+  width: var(--pet-widget-width, 220px);
+  height: var(--pet-widget-height, 300px);
   cursor: grab;
   touch-action: none;
   user-select: none;
@@ -59,8 +59,8 @@ textarea {
 .pet-dialog {
   position: absolute;
   left: 50%;
-  bottom: 250px;
-  width: min(340px, calc(100vw - 28px));
+  bottom: var(--pet-dialog-bottom, 250px);
+  width: min(var(--pet-dialog-width, 340px), calc(100vw - 28px));
   transform: translateX(-50%);
   border: 1px solid rgba(29, 154, 150, 0.32);
   border-radius: 8px;
@@ -96,6 +96,32 @@ textarea {
 
 .dialog-head strong {
   font-size: 14px;
+}
+
+.size-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7fbfb;
+}
+
+.size-controls button {
+  width: 28px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.size-controls button.active {
+  color: #ffffff;
+  background: var(--teal);
 }
 
 .icon-button {
@@ -176,9 +202,9 @@ textarea {
 .pet-visual {
   position: absolute;
   left: 50%;
-  bottom: 28px;
-  width: 220px;
-  height: 220px;
+  bottom: var(--pet-visual-bottom, 28px);
+  width: var(--pet-visual-size, 220px);
+  height: var(--pet-visual-size, 220px);
   transform: translateX(-50%);
   animation: petBreathe 3.1s ease-in-out infinite;
 }
@@ -206,13 +232,13 @@ textarea {
   text-shadow:
     0 1px 0 #ffffff,
     0 0 8px rgba(21, 223, 42, 0.5);
-  font-size: 13px;
+  font-size: var(--pet-name-font-size, 13px);
   font-weight: 800;
 }
 
 .heart-layer {
   position: absolute;
-  inset: -72px -34px 0;
+  inset: var(--pet-heart-inset, -72px -34px 0);
   pointer-events: none;
   overflow: visible;
   z-index: 3;
@@ -274,16 +300,9 @@ textarea {
 
 @media (max-width: 560px) {
   .pet-widget {
-    width: 190px;
-    height: 260px;
-  }
-
-  .pet-visual {
-    width: 190px;
-    height: 190px;
-  }
-
-  .pet-dialog {
-    bottom: 218px;
+    --pet-widget-width: 190px;
+    --pet-widget-height: 260px;
+    --pet-visual-size: 190px;
+    --pet-dialog-bottom: 218px;
   }
 }
