@@ -32,6 +32,7 @@ SIZE_PRESETS = {
     "small": 0.85,
     "medium": 1.0,
     "large": 1.25,
+    "xlarge": 2.5,
 }
 DEFAULT_SIZE_PRESET = "medium"
 
@@ -606,13 +607,14 @@ class DesktopCompanion:
         size_menu.add_command(label="小", command=lambda: self._set_size_preset("small"))
         size_menu.add_command(label="中", command=lambda: self._set_size_preset("medium"))
         size_menu.add_command(label="大", command=lambda: self._set_size_preset("large"))
+        size_menu.add_command(label="超大", command=lambda: self._set_size_preset("xlarge"))
         menu.add_cascade(label=f"大小：{self._size_label()}", menu=size_menu)
         menu.add_separator()
         menu.add_command(label="再见", command=self.root.destroy)
         menu.tk_popup(int(event.x_root), int(event.y_root))
 
     def _size_label(self) -> str:
-        return {"small": "小", "medium": "中", "large": "大"}.get(self.size_preset, "中")
+        return {"small": "小", "medium": "中", "large": "大", "xlarge": "超大"}.get(self.size_preset, "中")
 
 
 def main() -> None:

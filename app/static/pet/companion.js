@@ -15,11 +15,12 @@ const positionKey = "healthdesk.companion.position";
 const sizeKey = "healthdesk.companion.size";
 const heartColors = ["#ff4d6d", "#ff6b8a", "#ff85a1", "#ff3366", "#ff80ab", "#f06292", "#e91e63"];
 const petSpriteSize = 220;
-const sizePresetOrder = ["small", "medium", "large"];
+const sizePresetOrder = ["small", "medium", "large", "xlarge"];
 const sizePresets = {
   small: { label: "小", scale: 0.85 },
   medium: { label: "中", scale: 1 },
   large: { label: "大", scale: 1.25 },
+  xlarge: { label: "超大", scale: 2.5 },
 };
 const petSprites = {
   normal: null,
