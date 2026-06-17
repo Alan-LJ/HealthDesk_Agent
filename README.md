@@ -11,6 +11,11 @@
 <p align="center">
   <img src="pics/demo3.png" alt="HealthDesk Agent 桌宠输出办公健康建议" width="360">
   <img src="pics/demo4.png" alt="点击桌宠后出现爱心特效并唤起对话" width="360">
+  <img src="pics/demo5.png" alt="点击桌宠后出现爱心特效并唤起对话" width="360">
+  <img src="pics/demo6.png" alt="点击桌宠后出现爱心特效并唤起对话" width="360">
+  <img src="pics/demo7.png" alt="点击桌宠后出现爱心特效并唤起对话" width="360">
+  <img src="pics/demo8.png" alt="点击桌宠后出现爱心特效并唤起对话" width="360">
+  <img src="pics/demo9.png" alt="点击桌宠后出现爱心特效并唤起对话" width="360">
 </p>
 
 桌宠名叫“小灵”。你可以点击它、拖动它、和它聊天。它会根据 Agent 的最终结构化输出显示办公健康建议；点击时会切换形象并出现小爱心。最新版本支持小/中/大/超大四档大小切换，超大档使用 2 倍等比例缩放；浏览器轻量桌宠可在对话框中直接选择大小，Windows 桌面版可通过右键菜单调整大小。桌面版不局限在浏览器里，可以在 Windows 桌面和副屏之间自由拖动并驻留。

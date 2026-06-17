@@ -22,7 +22,7 @@ def switch_scenario(scenario_name: str) -> dict:
 def tick() -> dict:
     """生成一条模拟状态并写入 SQLite。"""
 
-    result = simulator.tick()
+    result = simulator.tick(repo.get_environment_settings())
     repo.save_tick(result.raw, result.feature, result.state, result.events, result.sensor_health)
     return {
         "scenario": result.scenario_name,

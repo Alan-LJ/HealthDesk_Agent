@@ -80,10 +80,10 @@ def search_device_docs_handler(retriever: RagRetriever, data: SearchKnowledgeInp
     )
 
 
-def build_rag_tools(retriever: RagRetriever | None = None) -> list[LocalToolBinding[Any]]:
+def build_rag_tools(retriever: RagRetriever | None = None, settings: Any | None = None) -> list[LocalToolBinding[Any]]:
     """创建 RAG 工具绑定。"""
 
-    retriever = retriever or build_default_rag_retriever()
+    retriever = retriever or build_default_rag_retriever(settings)
     return [
         make_tool(
             name="search_health_knowledge",

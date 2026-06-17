@@ -2,6 +2,7 @@ import pytest
 
 from app.agent_tools import build_agent_tools
 from app.agent_tools.local_tool import LocalToolBinding
+from app.agent_runtimes.settings import AgentRuntimeSettings
 from app.schemas.common import SensorHealth, TodaySummary
 from app.schemas.event import PetAction
 from app.simulation.simulator import HealthSimulator
@@ -16,9 +17,13 @@ def _repo_with_tick(tmp_path, scenario: str = "mixed_risk") -> HealthRepository:
     return repo
 
 
+def _settings(tmp_path) -> AgentRuntimeSettings:
+    return AgentRuntimeSettings(rag_backend="auto", rag_chroma_path=str(tmp_path / "chroma"))
+
+
 def test_agent_tool_registry_contains_required_tools(tmp_path):
     repo = _repo_with_tick(tmp_path)
-    registry = build_agent_tools(repo)
+    registry = build_agent_tools(repo, settings=_settings(tmp_path))
 
     expected = {
         "get_current_state",
@@ -26,6 +31,8 @@ def test_agent_tool_registry_contains_required_tools(tmp_path):
         "get_today_summary",
         "get_sensor_health",
         "get_memory_summary",
+        "get_weather",
+        "search_web",
         "search_health_knowledge",
         "search_pet_templates",
         "search_device_docs",
@@ -49,7 +56,7 @@ def test_agent_tool_registry_contains_required_tools(tmp_path):
 
 def test_context_and_rag_tools_return_observations(tmp_path):
     repo = _repo_with_tick(tmp_path, "sedentary_high")
-    registry = build_agent_tools(repo)
+    registry = build_agent_tools(repo, settings=_settings(tmp_path))
 
     state_obs = registry.get("get_current_state").invoke({"user_id": "default"})
     rag_obs = registry.get("search_health_knowledge").invoke({"query": "久坐 饮水 环境", "top_k": 3})
@@ -63,7 +70,7 @@ def test_context_and_rag_tools_return_observations(tmp_path):
 
 def test_analysis_tools_call_skill_package_handlers(tmp_path):
     repo = _repo_with_tick(tmp_path)
-    registry = build_agent_tools(repo)
+    registry = build_agent_tools(repo, settings=_settings(tmp_path))
 
     sedentary = registry.get("analyze_sedentary_risk").invoke(
         {"sedentary_minutes": 95, "posture_change_level": "low", "device_confidence": 0.9}
@@ -85,7 +92,7 @@ def test_analysis_tools_call_skill_package_handlers(tmp_path):
 
 def test_skill_markdown_is_in_tool_description(tmp_path):
     repo = _repo_with_tick(tmp_path)
-    registry = build_agent_tools(repo)
+    registry = build_agent_tools(repo, settings=_settings(tmp_path))
 
     description = registry.get("analyze_vital_trend").description
 
@@ -96,7 +103,7 @@ def test_skill_markdown_is_in_tool_description(tmp_path):
 
 def test_action_and_memory_tools(tmp_path):
     repo = _repo_with_tick(tmp_path)
-    registry = build_agent_tools(repo)
+    registry = build_agent_tools(repo, settings=_settings(tmp_path))
 
     pet_obs = registry.get("create_pet_action").invoke(
         {"risk_tags": ["hydration"], "risk_level": "medium", "user_tone": "gentle", "suggested_action": "喝几口水"}
@@ -115,7 +122,7 @@ def test_action_and_memory_tools(tmp_path):
 
 def test_create_daily_report_tool(tmp_path):
     repo = _repo_with_tick(tmp_path)
-    registry = build_agent_tools(repo)
+    registry = build_agent_tools(repo, settings=_settings(tmp_path))
 
     report_obs = registry.get("create_daily_report").invoke(
         {

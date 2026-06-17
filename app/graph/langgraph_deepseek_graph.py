@@ -25,6 +25,7 @@ AGENT_CAPABILITIES: dict[str, Any] = {
         "读取 AIContext 和 SQLite 中的当前办公状态，包括久坐、饮水、环境、设备置信度、近期事件和今日统计。",
         "按需调用真实工具分析久坐风险、饮水风险、环境舒适度、生命体征趋势和设备健康。",
         "按需检索本地 RAG 知识库，用于健康建议、设备说明和桌宠话术模板。",
+        "按需调用实时工具查询天气、空气质量和配置后的网页搜索结果，并在未配置时说明边界。",
         "在设备数据可信度不足时触发 DeviceGuardian handoff，并降低相关结论强度。",
         "输出结构化 HealthAgentFinalOutput，包括摘要、风险标签、建议、桌宠动作、置信度和 trace。",
         "回答功能介绍、使用方式、日期时间和一般说明类问题，并结合 AIContext 给出安全、简洁的回复。",
@@ -36,7 +37,7 @@ AGENT_CAPABILITIES: dict[str, Any] = {
     ],
     "capability_answer_style": (
         "功能介绍要直接面向用户，用第一人称说明：我可以读取当前办公健康状态、分析久坐/饮水/环境/设备可信度、"
-        "检索本地健康知识、生成桌宠提醒动作和保留 trace；同时说明我不做医疗诊断或治疗建议。"
+        "检索本地健康知识、查询天气/空气质量、生成桌宠提醒动作和保留 trace；同时说明我不做医疗诊断或治疗建议。"
     ),
 }
 
@@ -141,7 +142,7 @@ class DeepSeekReasonNode:
                 stop_reason="tool_error_stop",
             )
 
-        tool_calls = list(getattr(response, "tool_calls", []) or [])
+        tool_calls = _coerce_tool_calls(response)
         if len(tool_calls) > 1:
             status = dict(state.get("guardrail_status", {}))
             status["tool_guard"] = "multiple_tool_calls_trimmed_to_first"
@@ -155,6 +156,10 @@ class DeepSeekReasonNode:
         final_args = _extract_json_object(getattr(response, "content", ""))
         if final_args is not None:
             return self._accept_final_output(state, final_args, source="content_json")
+
+        plain_text = _extract_text_content(getattr(response, "content", ""))
+        if plain_text:
+            return self._accept_final_output(state, {"health_summary": plain_text, "confidence": 0.6}, source="content_text")
 
         state.setdefault("errors", []).append("DeepSeek 未返回 tool_call，也未返回可校验的最终 JSON。")
         return append_trace_step(
@@ -360,6 +365,8 @@ def _ensure_messages(state: AgentState, registry: AgentToolRegistry, settings: A
         "pet_action.message 控制在 40 个中文字符以内。"
         "用户当前状态只能来自 AIContext、get_current_state、SQLite 状态工具或 sensor_health 工具。"
         "RAG 只提供健康建议、设备说明和话术模板，不能替代当前状态。"
+        "天气、室外温湿度、降雨、风力、PM2.5、AQI、紫外线等外部实时环境信息必须调用 get_weather；"
+        "其他需要联网核验的实时网页信息才调用 search_web。未拿到工具结果时，不要编造实时事实。"
         "如设备置信度低或 sensor_health 异常，可触发 handoff_to_device_guardian。"
         "当信息足够时，调用 submit_final_output 提交 HealthAgentFinalOutput；不要输出散文作为最终答案。"
         "不要输出医疗诊断、疾病判断或必须就医等表达。"
@@ -437,6 +444,54 @@ def _normalize_final_output_args(final_args: dict[str, Any], state: AgentState) 
     return payload
 
 
+def _coerce_tool_calls(response: Any) -> list[dict[str, Any]]:
+    calls = [_normalize_tool_call(call) for call in list(getattr(response, "tool_calls", []) or [])]
+    calls = [call for call in calls if call is not None]
+    if calls:
+        return calls
+
+    additional_kwargs = dict(getattr(response, "additional_kwargs", {}) or {})
+    raw_calls = additional_kwargs.get("tool_calls") or additional_kwargs.get("tool_call") or []
+    if isinstance(raw_calls, dict):
+        raw_calls = [raw_calls]
+    if not isinstance(raw_calls, list):
+        return []
+    return [call for call in (_normalize_tool_call(raw) for raw in raw_calls) if call is not None]
+
+
+def _normalize_tool_call(call: Any) -> dict[str, Any] | None:
+    if not isinstance(call, dict):
+        return None
+
+    if "function" in call and isinstance(call["function"], dict):
+        function = call["function"]
+        name = function.get("name")
+        args = _parse_tool_args(function.get("arguments"))
+    else:
+        name = call.get("name")
+        args = _parse_tool_args(call.get("args") if "args" in call else call.get("arguments"))
+
+    if not name:
+        return None
+    return {
+        "name": str(name),
+        "args": args,
+        "id": str(call.get("id") or call.get("tool_call_id") or f"tool-{name}"),
+    }
+
+
+def _parse_tool_args(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 def _single_tool_call_message(response: Any, tool_call: dict[str, Any]) -> Any:
     """Return an AIMessage whose tool_calls match the single tool we execute."""
 
@@ -455,18 +510,52 @@ def _single_tool_call_message(response: Any, tool_call: dict[str, Any]) -> Any:
 def _extract_json_object(content: Any) -> dict[str, Any] | None:
     if isinstance(content, dict):
         return content
-    if not isinstance(content, str) or not content.strip():
+    text = _extract_text_content(content)
+    if not text:
         return None
-    text = content.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        if "\n" in text:
-            text = text.split("\n", 1)[1]
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    for candidate in _json_candidates(text):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
+def _extract_text_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(part.strip() for part in parts if part and part.strip()).strip()
+    return ""
+
+
+def _json_candidates(text: str) -> list[str]:
+    stripped = text.strip()
+    candidates = [stripped]
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if lines and lines[0].lstrip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        fenced = "\n".join(lines).strip()
+        if fenced:
+            candidates.append(fenced)
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end > start:
+        candidates.append(stripped[start : end + 1])
+    return list(dict.fromkeys(candidates))
 
 
 def _data_sources_used(state: AgentState) -> list[str]:

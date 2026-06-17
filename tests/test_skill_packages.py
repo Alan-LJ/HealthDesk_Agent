@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from app.schemas.common import SensorHealth, TodaySummary
+from app.schemas.environment import EnvironmentThresholdSettings
 from app.skills import SKILL_PACKAGE_NAMES, load_skill_markdown, skill_package_dir
 from app.skills.daily_report import DailyReportInput, DailyReportSkillHandler
 from app.skills.device_guardian import DeviceGuardianInput, DeviceGuardianSkillHandler
@@ -9,6 +10,7 @@ from app.skills.hydration import HydrationInput, HydrationSkillHandler
 from app.skills.pet_dialogue import PetDialogueInput, PetDialogueSkillHandler
 from app.skills.sedentary import SedentaryInput, SedentarySkillHandler
 from app.skills.vital_trend import VitalTrendInput, VitalTrendSkillHandler
+from app.skills.web_realtime import WebRealtimeSkillHandler, WebSearchInput
 
 
 def test_each_skill_package_has_required_files_and_sections():
@@ -30,12 +32,15 @@ def test_skill_package_handlers_reuse_existing_rules():
     environment = EnvironmentSkillHandler().run(EnvironmentInput(temperature_c=29, humidity_percent=30))
     vital = VitalTrendSkillHandler().run(VitalTrendInput(vital_quality="low"))
     pet = PetDialogueSkillHandler().run(PetDialogueInput(risk_tags=["sedentary"], risk_level="high", suggested_action="站起活动 2 到 3 分钟"))
+    realtime = WebRealtimeSkillHandler(brave_api_key="").search_web(WebSearchInput(query="实时搜索配置检查"))
 
     assert sedentary.risk_level == "high"
     assert hydration.risk_level == "high"
-    assert environment.comfort_status in {"dry", "hot"}
+    assert environment.comfort_status == "mixed"
+    assert environment.alert_level == "warning"
     assert vital.can_use_for_advice is False
     assert pet.animation == "stretch"
+    assert realtime.status == "unavailable"
 
 
 def test_report_and_device_guardian_handlers_reuse_existing_rules():
@@ -70,3 +75,25 @@ def test_load_skill_markdown_raises_for_missing_skill():
         assert "missing_skill" in str(exc)
     else:
         raise AssertionError("missing skill should raise FileNotFoundError")
+
+
+def test_environment_skill_uses_custom_thresholds():
+    settings = EnvironmentThresholdSettings(
+        temperature_comfort_min_c=20,
+        temperature_comfort_max_c=30,
+        humidity_comfort_min_percent=25,
+        humidity_comfort_max_percent=65,
+        temperature_warning_low_c=18,
+        temperature_warning_high_c=32,
+        humidity_warning_low_percent=20,
+        humidity_warning_high_percent=80,
+    )
+
+    comfortable = EnvironmentSkillHandler(settings=settings).run(EnvironmentInput(temperature_c=29, humidity_percent=30))
+    warning = EnvironmentSkillHandler(settings=settings).run(EnvironmentInput(temperature_c=33, humidity_percent=30))
+
+    assert comfortable.comfort_status == "comfortable"
+    assert comfortable.alert_level == "none"
+    assert warning.comfort_status == "hot"
+    assert warning.alert_level == "warning"
+    assert "重点监测" in warning.reason

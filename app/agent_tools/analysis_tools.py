@@ -44,13 +44,14 @@ def analyze_hydration_risk_handler(data: HydrationInput) -> ToolObservation:
     )
 
 
-def analyze_environment_comfort_handler(data: EnvironmentInput) -> ToolObservation:
-    result = EnvironmentSkillHandler().run(data)
+def analyze_environment_comfort_handler(repo: HealthRepository | None, data: EnvironmentInput, user_id: str = "default") -> ToolObservation:
+    settings = repo.get_environment_settings(user_id) if repo is not None else None
+    result = EnvironmentSkillHandler(settings=settings).run(data)
     return ToolObservation(
         tool_name="analyze_environment_comfort",
         summary=f"环境状态 {result.comfort_status}；原因: {result.reason}",
         raw_data=result.model_dump(),
-        metadata={"skill": "environment"},
+        metadata={"skill": "environment", "user_id": user_id},
     )
 
 
@@ -100,7 +101,8 @@ def analyze_office_health_snapshot_handler(repo: HealthRepository, data: Analyze
             temperature_c=state.temperature_c,
         )
     )
-    environment = EnvironmentSkillHandler().run(
+    environment_settings = repo.get_environment_settings(data.user_id)
+    environment = EnvironmentSkillHandler(settings=environment_settings).run(
         EnvironmentInput(temperature_c=state.temperature_c, humidity_percent=state.humidity_percent)
     )
     vital = VitalTrendSkillHandler().run(
@@ -137,7 +139,7 @@ def analyze_office_health_snapshot_handler(repo: HealthRepository, data: Analyze
         recommendations.append(
             {
                 "category": "environment",
-                "risk_level": "medium",
+                "risk_level": "medium" if environment.alert_level == "warning" else "low",
                 "reason": environment.reason,
                 "suggested_action": environment.suggested_action,
                 "data_sources": ["analyze_office_health_snapshot"],
@@ -264,7 +266,7 @@ def build_analysis_tools(repo: HealthRepository | None = None) -> list[LocalTool
             name="analyze_environment_comfort",
             description=_skill_description("environment", "根据温度和湿度判断办公环境舒适度。"),
             args_schema=EnvironmentInput,
-            func=analyze_environment_comfort_handler,
+            func=lambda data: analyze_environment_comfort_handler(repo, data),
         ),
         make_tool(
             name="analyze_vital_trend",

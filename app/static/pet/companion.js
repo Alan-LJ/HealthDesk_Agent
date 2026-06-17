@@ -10,9 +10,29 @@ const replyBox = document.querySelector("#replyBox");
 const heartLayer = document.querySelector("#heartLayer");
 const petCanvas = document.querySelector("#petCanvas");
 const sizeButtons = Array.from(document.querySelectorAll("[data-size-preset]"));
+const petContextMenu = document.querySelector("#petContextMenu");
+const contextEnvironmentSettings = document.querySelector("#contextEnvironmentSettings");
+const contextCycleSize = document.querySelector("#contextCycleSize");
+const environmentSettingsModal = document.querySelector("#environmentSettingsModal");
+const environmentSettingsForm = document.querySelector("#environmentSettingsForm");
+const environmentSettingsStatus = document.querySelector("#environmentSettingsStatus");
+const closeEnvironmentSettings = document.querySelector("#closeEnvironmentSettings");
+const cancelEnvironmentSettings = document.querySelector("#cancelEnvironmentSettings");
+const saveEnvironmentSettings = document.querySelector("#saveEnvironmentSettings");
 
 const positionKey = "healthdesk.companion.position";
 const sizeKey = "healthdesk.companion.size";
+const environmentSettingsUrl = "/settings/environment";
+const environmentSettingsDefaults = {
+  temperature_comfort_min_c: 22,
+  temperature_comfort_max_c: 26,
+  humidity_comfort_min_percent: 40,
+  humidity_comfort_max_percent: 60,
+  temperature_warning_low_c: 20,
+  temperature_warning_high_c: 28,
+  humidity_warning_low_percent: 35,
+  humidity_warning_high_percent: 70,
+};
 const heartColors = ["#ff4d6d", "#ff6b8a", "#ff85a1", "#ff3366", "#ff80ab", "#f06292", "#e91e63"];
 const petSpriteSize = 220;
 const sizePresetOrder = ["small", "medium", "large", "xlarge"];
@@ -29,6 +49,7 @@ const petSprites = {
 
 let dragging = null;
 let isBusy = false;
+let isSavingEnvironmentSettings = false;
 let activePetState = "normal";
 let activeSizePreset = loadSizePreset();
 let petSpriteReady = false;
@@ -41,13 +62,40 @@ initWidgetPosition();
 initPetSprite();
 
 petWidget.addEventListener("pointerdown", startDrag);
-petWidget.addEventListener("contextmenu", cycleSizeFromContextMenu);
+petWidget.addEventListener("contextmenu", showPetContextMenu);
 petDialog.addEventListener("pointerdown", stopDialogEvent);
 petDialog.addEventListener("click", stopDialogEvent);
-window.addEventListener("resize", clampWidgetPosition);
+petContextMenu.addEventListener("pointerdown", stopDialogEvent);
+petContextMenu.addEventListener("click", stopDialogEvent);
+environmentSettingsModal.addEventListener("pointerdown", closeEnvironmentSettingsFromBackdrop);
+environmentSettingsForm.addEventListener("pointerdown", stopDialogEvent);
+window.addEventListener("resize", () => {
+  hideContextMenu();
+  clampWidgetPosition();
+});
+document.addEventListener("pointerdown", hideContextMenuFromOutside);
+document.addEventListener("keydown", handleGlobalKeydown);
 
 closeDialog.addEventListener("click", () => {
   hideDialog();
+});
+
+contextEnvironmentSettings.addEventListener("click", async () => {
+  hideContextMenu();
+  await openEnvironmentSettings();
+});
+
+contextCycleSize.addEventListener("click", () => {
+  hideContextMenu();
+  cycleSizePreset();
+});
+
+closeEnvironmentSettings.addEventListener("click", closeEnvironmentSettingsModal);
+cancelEnvironmentSettings.addEventListener("click", closeEnvironmentSettingsModal);
+
+environmentSettingsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await submitEnvironmentSettings();
 });
 
 sizeButtons.forEach((button) => {
@@ -67,6 +115,126 @@ chatInput.addEventListener("keydown", (event) => {
     chatForm.requestSubmit();
   }
 });
+
+async function openEnvironmentSettings() {
+  environmentSettingsModal.classList.remove("hidden");
+  fillEnvironmentSettingsForm(environmentSettingsDefaults);
+  environmentSettingsStatus.textContent = "读取中...";
+  setEnvironmentSettingsBusy(true);
+  try {
+    const settings = await getJson(environmentSettingsUrl);
+    fillEnvironmentSettingsForm(settings);
+    environmentSettingsStatus.textContent = "";
+  } catch (error) {
+    environmentSettingsStatus.textContent = `读取失败：${error.message}`;
+  } finally {
+    setEnvironmentSettingsBusy(false);
+    const firstInput = environmentSettingsForm.querySelector("input");
+    if (firstInput) {
+      window.setTimeout(() => firstInput.focus(), 30);
+    }
+  }
+}
+
+function closeEnvironmentSettingsModal(options = {}) {
+  if (isSavingEnvironmentSettings && !options.force) {
+    return;
+  }
+  environmentSettingsModal.classList.add("hidden");
+  environmentSettingsStatus.textContent = "";
+}
+
+function closeEnvironmentSettingsFromBackdrop(event) {
+  if (event.target === environmentSettingsModal) {
+    closeEnvironmentSettingsModal();
+  }
+}
+
+async function submitEnvironmentSettings() {
+  if (isSavingEnvironmentSettings) {
+    return;
+  }
+  let payload;
+  try {
+    payload = readEnvironmentSettingsForm();
+    validateEnvironmentSettings(payload);
+  } catch (error) {
+    environmentSettingsStatus.textContent = error.message;
+    return;
+  }
+
+  isSavingEnvironmentSettings = true;
+  environmentSettingsStatus.textContent = "保存中...";
+  setEnvironmentSettingsBusy(true);
+  try {
+    const saved = await putJson(environmentSettingsUrl, payload);
+    fillEnvironmentSettingsForm(saved);
+    closeEnvironmentSettingsModal({ force: true });
+    showReply("环境阈值已保存，小灵会按新的温湿度区间提醒你。");
+  } catch (error) {
+    environmentSettingsStatus.textContent = `保存失败：${error.message}`;
+  } finally {
+    isSavingEnvironmentSettings = false;
+    setEnvironmentSettingsBusy(false);
+  }
+}
+
+function fillEnvironmentSettingsForm(settings) {
+  const merged = { ...environmentSettingsDefaults, ...settings };
+  Object.keys(environmentSettingsDefaults).forEach((name) => {
+    const input = environmentSettingsForm.elements[name];
+    if (input) {
+      input.value = String(merged[name]);
+    }
+  });
+}
+
+function readEnvironmentSettingsForm() {
+  const data = {};
+  Object.keys(environmentSettingsDefaults).forEach((name) => {
+    const input = environmentSettingsForm.elements[name];
+    const value = Number.parseFloat(input.value);
+    if (!Number.isFinite(value)) {
+      throw new Error("请填写完整的温湿度阈值。");
+    }
+    data[name] = value;
+  });
+  return data;
+}
+
+function validateEnvironmentSettings(settings) {
+  if (settings.temperature_comfort_min_c > settings.temperature_comfort_max_c) {
+    throw new Error("适宜温度下限不能高于上限。");
+  }
+  if (settings.humidity_comfort_min_percent > settings.humidity_comfort_max_percent) {
+    throw new Error("适宜湿度下限不能高于上限。");
+  }
+  if (settings.temperature_warning_low_c > settings.temperature_warning_high_c) {
+    throw new Error("重点监测低温不能高于高温。");
+  }
+  if (settings.humidity_warning_low_percent > settings.humidity_warning_high_percent) {
+    throw new Error("重点监测低湿不能高于高湿。");
+  }
+  if (settings.temperature_warning_low_c > settings.temperature_comfort_min_c) {
+    throw new Error("重点监测低温需小于或等于适宜温度下限。");
+  }
+  if (settings.temperature_warning_high_c < settings.temperature_comfort_max_c) {
+    throw new Error("重点监测高温需大于或等于适宜温度上限。");
+  }
+  if (settings.humidity_warning_low_percent > settings.humidity_comfort_min_percent) {
+    throw new Error("重点监测低湿需小于或等于适宜湿度下限。");
+  }
+  if (settings.humidity_warning_high_percent < settings.humidity_comfort_max_percent) {
+    throw new Error("重点监测高湿需大于或等于适宜湿度上限。");
+  }
+}
+
+function setEnvironmentSettingsBusy(value) {
+  Array.from(environmentSettingsForm.querySelectorAll("input")).forEach((input) => {
+    input.disabled = value;
+  });
+  saveEnvironmentSettings.disabled = value;
+}
 
 function loadSizePreset() {
   const saved = localStorage.getItem(sizeKey);
@@ -118,11 +286,44 @@ function setSizePresetFromControl(preset) {
   dialogStatus.textContent = `大小：${sizePresets[preset].label}`;
 }
 
-function cycleSizeFromContextMenu(event) {
+function showPetContextMenu(event) {
   if (petDialog.contains(event.target)) {
     return;
   }
   event.preventDefault();
+  clearHideReplyTimer();
+  positionContextMenu(event.clientX, event.clientY);
+  petContextMenu.classList.remove("hidden");
+}
+
+function positionContextMenu(left, top) {
+  petContextMenu.classList.remove("hidden");
+  const maxLeft = Math.max(8, window.innerWidth - petContextMenu.offsetWidth - 8);
+  const maxTop = Math.max(8, window.innerHeight - petContextMenu.offsetHeight - 8);
+  petContextMenu.style.left = `${Math.round(clamp(left, 8, maxLeft))}px`;
+  petContextMenu.style.top = `${Math.round(clamp(top, 8, maxTop))}px`;
+}
+
+function hideContextMenu() {
+  petContextMenu.classList.add("hidden");
+}
+
+function hideContextMenuFromOutside(event) {
+  if (petContextMenu.classList.contains("hidden") || petContextMenu.contains(event.target)) {
+    return;
+  }
+  hideContextMenu();
+}
+
+function handleGlobalKeydown(event) {
+  if (event.key !== "Escape") {
+    return;
+  }
+  hideContextMenu();
+  closeEnvironmentSettingsModal();
+}
+
+function cycleSizePreset() {
   const currentIndex = sizePresetOrder.indexOf(activeSizePreset);
   const nextPreset = sizePresetOrder[(currentIndex + 1) % sizePresetOrder.length];
   applySizePreset(nextPreset, { persist: true, clamp: true });
@@ -245,11 +446,28 @@ function formatAgentReply(result) {
   return lines.join("\n\n") || "\u5c0f\u7075\u5df2\u7ecf\u6536\u5230\u4e86\u3002";
 }
 
+async function getJson(url) {
+  return requestJson(url);
+}
+
 async function postJson(url, payload) {
+  return requestJson(url, { method: "POST", payload });
+}
+
+async function putJson(url, payload) {
+  return requestJson(url, { method: "PUT", payload });
+}
+
+async function requestJson(url, options = {}) {
+  const method = options.method || "GET";
+  const headers = {};
+  const fetchOptions = { method, headers };
+  if (options.payload !== undefined) {
+    headers["Content-Type"] = "application/json";
+    fetchOptions.body = JSON.stringify(options.payload);
+  }
   const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    ...fetchOptions,
   });
   const text = await response.text();
   let data = {};
@@ -261,9 +479,22 @@ async function postJson(url, payload) {
     }
   }
   if (!response.ok) {
-    throw new Error(data.detail || `HTTP ${response.status}`);
+    throw new Error(formatErrorDetail(data.detail) || `HTTP ${response.status}`);
   }
   return data;
+}
+
+function formatErrorDetail(detail) {
+  if (!detail) {
+    return "";
+  }
+  if (typeof detail === "string") {
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    return detail.map((item) => item.msg || item.message || JSON.stringify(item)).join("；");
+  }
+  return detail.message || JSON.stringify(detail);
 }
 
 function startDrag(event) {

@@ -78,7 +78,7 @@ class LangGraphDeepSeekRuntime(BaseAgentRuntime):
             return self._graph
         with self._cache_lock:
             if self._graph is None:
-                registry = build_agent_tools(self.repo)
+                registry = build_agent_tools(self.repo, settings=self.settings)
                 chat_model = self._chat_model_instance or self._build_chat_model()
                 self._registry = registry
                 self._chat_model_instance = chat_model

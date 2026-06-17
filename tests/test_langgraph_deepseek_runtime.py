@@ -48,6 +48,47 @@ class FakeToolCallingDeepSeek:
         )
 
 
+class FakePlainTextDeepSeek:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.bound_tool_names: list[str] = []
+
+    def bind_tools(self, tools):
+        self.bound_tool_names = [tool.name for tool in tools]
+        return self
+
+    def invoke(self, _messages):
+        return AIMessage(content=self.content)
+
+
+class RawAdditionalKwargsMessage:
+    content = ""
+    response_metadata: dict = {}
+
+    def __init__(self, tool_calls: list[dict]) -> None:
+        self.additional_kwargs = {"tool_calls": tool_calls}
+        self.tool_calls: list[dict] = []
+
+
+class FakeRawToolCallDeepSeek:
+    def bind_tools(self, _tools):
+        return self
+
+    def invoke(self, _messages):
+        return RawAdditionalKwargsMessage(
+            [
+                {
+                    "id": "final-output",
+                    "type": "function",
+                    "function": {
+                        "name": "submit_final_output",
+                        "arguments": json.dumps(_final_args("原始 tool_calls 格式已被规范化。"), ensure_ascii=False),
+                    },
+                }
+            ]
+        )
+
+
 def _repo_with_tick(tmp_path, scenario: str) -> HealthRepository:
     repo = HealthRepository(tmp_path / f"{scenario}.db")
     tick = HealthSimulator(scenario).tick()
@@ -164,6 +205,29 @@ def test_langgraph_deepseek_runtime_provides_capability_context_for_direct_answe
     assert "health_summary 必须是给用户看的最终答复" in system_text
     assert result.metadata["tools_called"] == []
     assert result.final_output["data_sources_used"] == ["ai_context"]
+
+
+def test_langgraph_deepseek_runtime_wraps_plain_text_response_as_final_output(tmp_path):
+    repo = _repo_with_tick(tmp_path, "normal_work")
+    fake_model = FakePlainTextDeepSeek("你好，我是小灵。可以帮你查看办公健康状态，也可以回答简单问题。")
+    runtime = LangGraphDeepSeekRuntime(repo=repo, settings=_settings(), chat_model=fake_model)
+
+    result = runtime.run(AgentRunRequest(task="你好"))
+
+    assert result.final_output["health_summary"].startswith("你好，我是小灵")
+    assert result.final_output["runtime"] == "langgraph_deepseek"
+    assert result.stop_reason == "final_schema_valid_stop"
+    assert result.warnings == []
+
+
+def test_langgraph_deepseek_runtime_accepts_raw_additional_kwargs_tool_calls(tmp_path):
+    repo = _repo_with_tick(tmp_path, "normal_work")
+    runtime = LangGraphDeepSeekRuntime(repo=repo, settings=_settings(), chat_model=FakeRawToolCallDeepSeek())
+
+    result = runtime.run(AgentRunRequest(task="你好"))
+
+    assert result.final_output["health_summary"] == "原始 tool_calls 格式已被规范化。"
+    assert result.stop_reason == "final_schema_valid_stop"
 
 
 def test_same_real_runtime_can_follow_different_model_tool_sequences(tmp_path):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.schemas.common import SensorHealth
+from app.schemas.environment import EnvironmentThresholdSettings, assess_environment_comfort
 from app.schemas.event import EventData
 from app.schemas.feature import FeatureData
 from app.schemas.state import StateData
@@ -17,20 +18,14 @@ SCENARIOS = {
 }
 
 
-def comfort_from_env(temperature_c: float, humidity_percent: float) -> str:
+def comfort_from_env(
+    temperature_c: float,
+    humidity_percent: float,
+    environment_settings: EnvironmentThresholdSettings | None = None,
+) -> str:
     """根据温湿度给出舒适度标签，规则保持简单，便于面试讲解。"""
 
-    if temperature_c > 28 and humidity_percent < 35:
-        return "mixed"
-    if temperature_c > 28:
-        return "hot"
-    if temperature_c < 20:
-        return "cold"
-    if humidity_percent < 35:
-        return "dry"
-    if humidity_percent > 70:
-        return "humid"
-    return "comfortable"
+    return assess_environment_comfort(temperature_c, humidity_percent, environment_settings).comfort_status
 
 
 def scenario_feature(name: str) -> FeatureData:
@@ -61,7 +56,11 @@ def scenario_feature(name: str) -> FeatureData:
     return FeatureData(sedentary_minutes=28, posture_change_level="medium", drink_today_ml=1000, last_drink_minutes_ago=35, breath_rate_bpm=16, heart_rate_bpm=76)
 
 
-def feature_to_state(feature: FeatureData, device_confidence: float = 0.95) -> StateData:
+def feature_to_state(
+    feature: FeatureData,
+    device_confidence: float = 0.95,
+    environment_settings: EnvironmentThresholdSettings | None = None,
+) -> StateData:
     """把 Feature Data 转成当前 State Data。"""
 
     return StateData(
@@ -72,7 +71,7 @@ def feature_to_state(feature: FeatureData, device_confidence: float = 0.95) -> S
         last_drink_minutes_ago=feature.last_drink_minutes_ago,
         temperature_c=feature.temperature_c,
         humidity_percent=feature.humidity_percent,
-        comfort_status=comfort_from_env(feature.temperature_c, feature.humidity_percent),
+        comfort_status=comfort_from_env(feature.temperature_c, feature.humidity_percent, environment_settings),
         breath_rate_bpm=feature.breath_rate_bpm,
         heart_rate_bpm=feature.heart_rate_bpm,
         vital_quality=feature.vital_quality,

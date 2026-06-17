@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.schemas.common import Quality
+from app.schemas.environment import EnvironmentThresholdSettings
 from app.schemas.raw import RawData
 from app.simulation.scenarios import SCENARIOS, feature_to_state, scenario_feature, scenario_sensor_health, state_events
 
@@ -38,14 +39,14 @@ class HealthSimulator:
             raise ValueError(f"未知场景: {scenario_name}")
         self.scenario_name = scenario_name
 
-    def tick(self) -> SimulationTick:
+    def tick(self, environment_settings: EnvironmentThresholdSettings | None = None) -> SimulationTick:
         """生成一次完整模拟数据，并自动推导事件。"""
 
         self.seq += 1
         feature = scenario_feature(self.scenario_name)
         sensor_health = scenario_sensor_health(self.scenario_name)
         device_confidence = min(item.confidence for item in sensor_health)
-        state = feature_to_state(feature, device_confidence=device_confidence)
+        state = feature_to_state(feature, device_confidence=device_confidence, environment_settings=environment_settings)
         raw = [
             RawData(
                 source="seat_pressure",

@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.schemas.common import now_ms
+from app.schemas.environment import ComfortStatus
 
 
 class StateData(BaseModel):
@@ -23,7 +24,7 @@ class StateData(BaseModel):
     last_drink_minutes_ago: int = Field(default=0, ge=0)
     temperature_c: float = 24.0
     humidity_percent: float = Field(default=50.0, ge=0.0, le=100.0)
-    comfort_status: Literal["comfortable", "dry", "hot", "cold", "humid", "mixed"] = "comfortable"
+    comfort_status: ComfortStatus = "comfortable"
     breath_rate_bpm: int | None = None
     heart_rate_bpm: int | None = None
     vital_quality: Literal["low", "medium", "high"] = "high"

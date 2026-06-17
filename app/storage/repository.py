@@ -9,10 +9,14 @@ from pydantic import BaseModel
 
 from app.schemas.common import SensorHealth, TodaySummary, now_ms
 from app.schemas.event import EventData, PetAction
+from app.schemas.environment import EnvironmentThresholdSettings
 from app.schemas.feature import FeatureData
 from app.schemas.raw import RawData
 from app.schemas.state import StateData
 from app.storage.db import DEFAULT_DB_PATH, connect, init_db
+
+
+ENVIRONMENT_SETTINGS_KEY_PREFIX = "environment_settings"
 
 
 def _dump(obj: BaseModel | dict[str, Any]) -> str:
@@ -83,6 +87,21 @@ class HealthRepository:
         data = self.get_kv("sensor_health", [])
         return [SensorHealth.model_validate(item) for item in data]
 
+    def get_environment_settings(self, user_id: str = "default") -> EnvironmentThresholdSettings:
+        data = self.get_kv(_environment_settings_key(user_id), None)
+        if data is None:
+            return EnvironmentThresholdSettings()
+        return EnvironmentThresholdSettings.model_validate(data)
+
+    def save_environment_settings(
+        self,
+        settings: EnvironmentThresholdSettings,
+        user_id: str = "default",
+    ) -> EnvironmentThresholdSettings:
+        saved = settings.model_copy(update={"updated_at_ms": now_ms()})
+        self.set_kv(_environment_settings_key(user_id), saved.model_dump())
+        return saved
+
     def save_pet_action(self, action: PetAction) -> None:
         self.append("pet_action_log", action)
         self.append("event_log", EventData(event_type="pet_action_triggered", severity=action.priority, message=action.message, payload=action.model_dump()))
@@ -138,3 +157,8 @@ class HealthRepository:
         if not row:
             return default
         return json.loads(row["value_json"])
+
+
+def _environment_settings_key(user_id: str) -> str:
+    safe_user_id = user_id.strip() or "default"
+    return f"{ENVIRONMENT_SETTINGS_KEY_PREFIX}:{safe_user_id}"

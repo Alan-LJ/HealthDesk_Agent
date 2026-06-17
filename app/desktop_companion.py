@@ -3,11 +3,15 @@ from __future__ import annotations
 import ctypes
 import json
 import math
+import os
 import random
 import sys
 import threading
 import traceback
 import tkinter as tk
+import tkinter.messagebox as messagebox
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -51,12 +55,27 @@ APP_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = APP_DIR.parent
 PET_ASSET_DIR = PROJECT_ROOT / "pics"
 POSITION_FILE = PROJECT_ROOT / ".hdagent" / "desktop_companion_position.json"
+DEFAULT_API_BASE_URL = "http://127.0.0.1:8000"
+API_TIMEOUT_SECONDS = 8
+DESKTOP_DATA_DIR = Path(os.getenv("LOCALAPPDATA", str(PROJECT_ROOT / ".hdagent"))) / "HealthDeskAgent"
+ENVIRONMENT_SETTING_FIELDS = [
+    ("temperature_comfort_min_c", "适宜温度下限", "°C"),
+    ("temperature_comfort_max_c", "适宜温度上限", "°C"),
+    ("temperature_warning_low_c", "重点低温(≤下限)", "°C"),
+    ("temperature_warning_high_c", "重点高温(≥上限)", "°C"),
+    ("humidity_comfort_min_percent", "适宜湿度下限", "%"),
+    ("humidity_comfort_max_percent", "适宜湿度上限", "%"),
+    ("humidity_warning_low_percent", "重点低湿(≤下限)", "%"),
+    ("humidity_warning_high_percent", "重点高湿(≥上限)", "%"),
+]
 
 
 class DesktopCompanion:
     """Windows desktop companion using a transparent borderless tkinter window."""
 
     def __init__(self) -> None:
+        self._configure_desktop_runtime_paths()
+        self.api_base_url = self._load_api_base_url()
         self.size_preset = self._load_saved_size_preset()
         self.scale = SIZE_PRESETS[self.size_preset]
         self._sync_layout_metrics()
@@ -106,11 +125,15 @@ class DesktopCompanion:
         self.input_text: tk.Text | None = None
         self.status_var = tk.StringVar(value="Ready")
         self.send_button: tk.Button | None = None
+        self.size_buttons: dict[str, tk.Button] = {}
         self.dialog_visible = False
         self.reply_hide_after: str | None = None
         self.reset_after: str | None = None
         self.runtime: Any = None
         self.busy = False
+        self.environment_settings_window: tk.Toplevel | None = None
+        self.environment_setting_entries: dict[str, tk.Entry] = {}
+        self.environment_settings_status: tk.StringVar | None = None
 
         self.drag_x = 0
         self.drag_y = 0
@@ -157,6 +180,60 @@ class DesktopCompanion:
         return int(round(float(value) * self.scale))
 
     @staticmethod
+    def _configure_desktop_runtime_paths() -> None:
+        DESKTOP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        if not os.getenv("DATABASE_PATH") and not os.getenv("HEALTHDESK_DB_PATH"):
+            db_path = DESKTOP_DATA_DIR / "healthdesk.db"
+            os.environ["DATABASE_PATH"] = str(db_path)
+            os.environ["HEALTHDESK_DB_PATH"] = str(db_path)
+        if not os.getenv("RAG_CHROMA_PATH"):
+            os.environ["RAG_CHROMA_PATH"] = str(DESKTOP_DATA_DIR / "chroma")
+
+    @staticmethod
+    def _load_api_base_url() -> str:
+        value = os.getenv("HEALTHDESK_API_BASE_URL") or os.getenv("HEALTHDESK_DESKTOP_API_BASE_URL") or DEFAULT_API_BASE_URL
+        return value.strip().rstrip("/") or DEFAULT_API_BASE_URL
+
+    def _request_json(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        url = f"{self.api_base_url}{path}"
+        body = None
+        headers = {"Accept": "application/json"}
+        if payload is not None:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(url, data=body, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=API_TIMEOUT_SECONDS) as response:
+                text = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(self._format_api_error(detail, exc.code)) from exc
+        except urllib.error.URLError as exc:
+            raise ConnectionError(f"无法连接 HealthDesk API：{self.api_base_url}") from exc
+        if not text:
+            return {}
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"API 返回了无法解析的 JSON：{text[:120]}") from exc
+        return data if isinstance(data, dict) else {"data": data}
+
+    @staticmethod
+    def _format_api_error(text: str, status_code: int) -> str:
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return text or f"HTTP {status_code}"
+        detail = data.get("detail") if isinstance(data, dict) else None
+        if isinstance(detail, str):
+            return detail
+        if isinstance(detail, list):
+            return "；".join(str(item.get("msg", item)) if isinstance(item, dict) else str(item) for item in detail)
+        if detail:
+            return str(detail)
+        return f"HTTP {status_code}"
+
+    @staticmethod
     def _load_saved_size_preset() -> str:
         if not POSITION_FILE.exists():
             return DEFAULT_SIZE_PRESET
@@ -180,6 +257,25 @@ class DesktopCompanion:
         head.grid(row=0, column=0, sticky="ew", padx=10, pady=(8, 4))
         head.grid_columnconfigure(0, weight=1)
         tk.Label(head, text="小灵", bg="#ffffff", fg="#18232b", font=("Microsoft YaHei UI", 10, "bold")).grid(row=0, column=0, sticky="w")
+        size_controls = tk.Frame(head, bg="#f7fbfb", highlightbackground="#d7e2e5", highlightthickness=1)
+        size_controls.grid(row=0, column=1, sticky="e", padx=(8, 8))
+        self.size_buttons = {}
+        for index, (preset, label) in enumerate([("small", "小"), ("medium", "中"), ("large", "大"), ("xlarge", "超大")]):
+            button = tk.Button(
+                size_controls,
+                text=label,
+                width=3 if preset != "xlarge" else 4,
+                command=lambda value=preset: self._set_size_preset(value),
+                relief="flat",
+                bd=0,
+                padx=3,
+                pady=1,
+                cursor="hand2",
+                font=("Microsoft YaHei UI", 8),
+            )
+            button.grid(row=0, column=index, padx=1, pady=1)
+            self.size_buttons[preset] = button
+        self._sync_size_buttons()
         tk.Button(
             head,
             text="×",
@@ -189,7 +285,7 @@ class DesktopCompanion:
             fg="#63737d",
             relief="flat",
             cursor="hand2",
-        ).grid(row=0, column=1, sticky="e")
+        ).grid(row=0, column=2, sticky="e")
 
         self.input_text = tk.Text(
             frame,
@@ -403,6 +499,16 @@ class DesktopCompanion:
         self.current_excited = excited
         self.canvas.itemconfig(self.pet_image_id, image=self.img_excited if excited else self.img_normal)
 
+    def _sync_size_buttons(self) -> None:
+        for preset, button in self.size_buttons.items():
+            active = preset == self.size_preset
+            button.config(
+                bg="#1d9a96" if active else "#f7fbfb",
+                fg="#ffffff" if active else "#63737d",
+                activebackground="#16857f" if active else "#eaf5f5",
+                activeforeground="#ffffff" if active else "#18232b",
+            )
+
     def _set_size_preset(self, preset: str) -> None:
         if preset not in SIZE_PRESETS or preset == self.size_preset:
             return
@@ -411,6 +517,7 @@ class DesktopCompanion:
         current_y = self.root.winfo_y()
         self.size_preset = preset
         self.scale = SIZE_PRESETS[preset]
+        self._sync_size_buttons()
         self._sync_layout_metrics()
 
         self.img_normal = self._load_pet_image(PET_ASSET_DIR / "corgi_normal.png")
@@ -493,13 +600,47 @@ class DesktopCompanion:
             self.root.after(0, lambda: self._show_reply(f"小灵没有完成这次对话：{exc}"))
 
     def _run_agent(self, task: str) -> dict[str, Any]:
+        try:
+            result = self._request_json("POST", "/agent/run", {"task": task, "user_id": "default"})
+            if self._agent_result_needs_state_seed(result):
+                self._ensure_api_state()
+                result = self._request_json("POST", "/agent/run", {"task": task, "user_id": "default"})
+            return result
+        except ConnectionError:
+            pass
+
         from app.agent_runtimes import AgentRunRequest, LangGraphDeepSeekRuntime
         from app.main_state import repo
 
+        self._ensure_local_state()
         if self.runtime is None:
             self.runtime = LangGraphDeepSeekRuntime(repo=repo)
         result = self.runtime.run(AgentRunRequest(task=task, user_id="default"))
         return result.model_dump()
+
+    @staticmethod
+    def _agent_result_needs_state_seed(result: dict[str, Any]) -> bool:
+        final_output = result.get("final_output") if isinstance(result.get("final_output"), dict) else {}
+        summary = str(final_output.get("health_summary") or result.get("message") or "")
+        return "当前没有状态数据" in summary or "simulation tick" in summary
+
+    def _ensure_api_state(self) -> None:
+        try:
+            self._request_json("GET", "/state/current")
+            return
+        except RuntimeError as exc:
+            if "请先调用 /simulation/tick" not in str(exc) and "当前没有状态数据" not in str(exc):
+                raise
+        self._request_json("POST", "/simulation/tick")
+
+    @staticmethod
+    def _ensure_local_state() -> None:
+        from app.main_state import repo, simulator
+
+        if repo.get_current_state() is not None:
+            return
+        tick = simulator.tick(repo.get_environment_settings("default"))
+        repo.save_tick(tick.raw, tick.feature, tick.state, tick.events, tick.sensor_health)
 
     def _show_reply(self, text: str) -> None:
         self.busy = False
@@ -612,22 +753,235 @@ class DesktopCompanion:
             return
         self.root.after(70, self._apply_next_bounce)
 
+    def _load_environment_settings(self) -> dict[str, Any]:
+        try:
+            return self._request_json("GET", "/settings/environment?user_id=default")
+        except ConnectionError:
+            from app.main_state import repo
+
+            return repo.get_environment_settings("default").model_dump()
+
+    def _save_environment_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from app.schemas.environment import EnvironmentThresholdSettings
+
+        settings = EnvironmentThresholdSettings(**payload)
+        data = settings.model_dump()
+        try:
+            return self._request_json("PUT", "/settings/environment?user_id=default", data)
+        except ConnectionError:
+            from app.main_state import repo
+
+            return repo.save_environment_settings(settings, "default").model_dump()
+
+    def _open_environment_settings_dialog(self) -> None:
+        if self.environment_settings_window is not None and self.environment_settings_window.winfo_exists():
+            self.environment_settings_window.lift()
+            self.environment_settings_window.focus_force()
+            return
+
+        window = tk.Toplevel(self.root)
+        window.title("环境阈值设置")
+        window.configure(bg="#ffffff")
+        window.resizable(False, False)
+        window.attributes("-topmost", True)
+        window.transient(self.root)
+        window.protocol("WM_DELETE_WINDOW", self._close_environment_settings_dialog)
+
+        self.environment_settings_window = window
+        self.environment_setting_entries = {}
+        self.environment_settings_status = tk.StringVar(value="读取中...")
+
+        container = tk.Frame(window, bg="#ffffff", padx=14, pady=12)
+        container.grid(row=0, column=0, sticky="nsew")
+        tk.Label(
+            container,
+            text="环境阈值",
+            bg="#ffffff",
+            fg="#18232b",
+            font=("Microsoft YaHei UI", 12, "bold"),
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        tk.Label(
+            container,
+            text="重点低温/低湿需不高于适宜下限；重点高温/高湿需不低于适宜上限。",
+            bg="#ffffff",
+            fg="#63737d",
+            font=("Microsoft YaHei UI", 8),
+            wraplength=300,
+            justify="left",
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 6))
+
+        for row, (name, label, unit) in enumerate(ENVIRONMENT_SETTING_FIELDS, start=2):
+            tk.Label(container, text=label, bg="#ffffff", fg="#263c46", font=("Microsoft YaHei UI", 10)).grid(row=row, column=0, sticky="w", pady=4)
+            entry = tk.Entry(container, width=12, relief="solid", bd=1, font=("Microsoft YaHei UI", 10))
+            entry.grid(row=row, column=1, sticky="ew", padx=(10, 6), pady=4)
+            tk.Label(container, text=unit, bg="#ffffff", fg="#63737d", font=("Microsoft YaHei UI", 10)).grid(row=row, column=2, sticky="w", pady=4)
+            self.environment_setting_entries[name] = entry
+
+        tk.Label(
+            container,
+            textvariable=self.environment_settings_status,
+            bg="#ffffff",
+            fg="#63737d",
+            font=("Microsoft YaHei UI", 9),
+            wraplength=320,
+            justify="left",
+        ).grid(row=len(ENVIRONMENT_SETTING_FIELDS) + 2, column=0, columnspan=3, sticky="ew", pady=(8, 6))
+
+        actions = tk.Frame(container, bg="#ffffff")
+        actions.grid(row=len(ENVIRONMENT_SETTING_FIELDS) + 3, column=0, columnspan=3, sticky="e")
+        tk.Button(
+            actions,
+            text="取消",
+            command=self._close_environment_settings_dialog,
+            bg="#ffffff",
+            fg="#63737d",
+            relief="flat",
+            padx=12,
+            pady=5,
+            cursor="hand2",
+        ).grid(row=0, column=0, padx=(0, 8))
+        tk.Button(
+            actions,
+            text="确认保存",
+            command=self._submit_environment_settings_dialog,
+            bg="#1d9a96",
+            fg="#ffffff",
+            activebackground="#16857f",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=14,
+            pady=5,
+            cursor="hand2",
+        ).grid(row=0, column=1)
+
+        self._center_environment_settings_dialog(window)
+        threading.Thread(target=self._load_environment_settings_worker, daemon=True).start()
+
+    def _center_environment_settings_dialog(self, window: tk.Toplevel) -> None:
+        window.update_idletasks()
+        width = window.winfo_reqwidth()
+        height = window.winfo_reqheight()
+        x = self.root.winfo_x() + max(0, (self.canvas_w - width) // 2)
+        y = self.root.winfo_y() + max(0, (self.canvas_h - height) // 2)
+        window.geometry(f"{width}x{height}{self._geometry_offset(x, y)}")
+
+    def _close_environment_settings_dialog(self) -> None:
+        if self.environment_settings_window is not None and self.environment_settings_window.winfo_exists():
+            self.environment_settings_window.destroy()
+        self.environment_settings_window = None
+        self.environment_setting_entries = {}
+        self.environment_settings_status = None
+
+    def _load_environment_settings_worker(self) -> None:
+        try:
+            settings = self._load_environment_settings()
+        except Exception as exc:
+            message = str(exc)
+            self.root.after(0, lambda: self._set_environment_settings_status(f"读取失败：{message}"))
+            return
+        self.root.after(0, lambda: self._fill_environment_settings_dialog(settings))
+
+    def _fill_environment_settings_dialog(self, settings: dict[str, Any]) -> None:
+        if self.environment_settings_window is None or not self.environment_settings_window.winfo_exists():
+            return
+        for name, _label, _unit in ENVIRONMENT_SETTING_FIELDS:
+            entry = self.environment_setting_entries.get(name)
+            if entry is None:
+                continue
+            value = settings.get(name, "")
+            entry.delete(0, "end")
+            entry.insert(0, str(value))
+        self._set_environment_settings_status("当前配置已同步。")
+
+    def _submit_environment_settings_dialog(self) -> None:
+        try:
+            payload = {
+                name: float(self.environment_setting_entries[name].get().strip())
+                for name, _label, _unit in ENVIRONMENT_SETTING_FIELDS
+            }
+        except (KeyError, ValueError):
+            self._set_environment_settings_status("请填写完整的数字阈值。")
+            return
+        message = self._validate_environment_settings_payload(payload)
+        if message:
+            self._set_environment_settings_status(message)
+            return
+        self._set_environment_settings_status("保存中...")
+        threading.Thread(target=self._save_environment_settings_worker, args=(payload,), daemon=True).start()
+
+    @staticmethod
+    def _validate_environment_settings_payload(payload: dict[str, float]) -> str:
+        if payload["temperature_comfort_min_c"] > payload["temperature_comfort_max_c"]:
+            return "适宜温度下限不能高于适宜温度上限。"
+        if payload["humidity_comfort_min_percent"] > payload["humidity_comfort_max_percent"]:
+            return "适宜湿度下限不能高于适宜湿度上限。"
+        if payload["temperature_warning_low_c"] > payload["temperature_warning_high_c"]:
+            return "重点监测低温不能高于重点监测高温。"
+        if payload["humidity_warning_low_percent"] > payload["humidity_warning_high_percent"]:
+            return "重点监测低湿不能高于重点监测高湿。"
+        if payload["temperature_warning_low_c"] > payload["temperature_comfort_min_c"]:
+            return "重点监测低温需小于或等于适宜温度下限。比如适宜下限 18°C 时，重点低温应填 18°C 或更低。"
+        if payload["temperature_warning_high_c"] < payload["temperature_comfort_max_c"]:
+            return "重点监测高温需大于或等于适宜温度上限。"
+        if payload["humidity_warning_low_percent"] > payload["humidity_comfort_min_percent"]:
+            return "重点监测低湿需小于或等于适宜湿度下限。"
+        if payload["humidity_warning_high_percent"] < payload["humidity_comfort_max_percent"]:
+            return "重点监测高湿需大于或等于适宜湿度上限。"
+        return ""
+
+    def _save_environment_settings_worker(self, payload: dict[str, Any]) -> None:
+        try:
+            saved = self._save_environment_settings(payload)
+        except Exception as exc:
+            message = self._format_environment_settings_error(exc)
+            self.root.after(0, lambda: self._set_environment_settings_status(f"保存失败：{message}"))
+            return
+        self.root.after(0, lambda: self._on_environment_settings_saved(saved))
+
+    @staticmethod
+    def _format_environment_settings_error(exc: Exception) -> str:
+        text = str(exc)
+        known_messages = [
+            "适宜温度下限不能高于适宜温度上限",
+            "适宜湿度下限不能高于适宜湿度上限",
+            "重点监测低温不能高于重点监测高温",
+            "重点监测高温需大于或等于适宜温度上限",
+            "重点监测低温需小于或等于适宜温度下限",
+            "重点监测低湿不能高于重点监测高湿",
+            "重点监测低湿需小于或等于适宜湿度下限",
+            "重点监测高湿需大于或等于适宜湿度上限",
+        ]
+        for message in known_messages:
+            if message in text:
+                return message + "。"
+        legacy_messages = {
+            "temperature warning low must be <= comfort min": "重点监测低温需小于或等于适宜温度下限。",
+            "temperature warning high must be >= comfort max": "重点监测高温需大于或等于适宜温度上限。",
+            "humidity warning low must be <= comfort min": "重点监测低湿需小于或等于适宜湿度下限。",
+            "humidity warning high must be >= comfort max": "重点监测高湿需大于或等于适宜湿度上限。",
+        }
+        for legacy, message in legacy_messages.items():
+            if legacy in text:
+                return message
+        return text.splitlines()[0] if text else "未知错误"
+
+    def _on_environment_settings_saved(self, saved: dict[str, Any]) -> None:
+        self._fill_environment_settings_dialog(saved)
+        messagebox.showinfo("环境阈值", "环境阈值已保存，桌宠会按新的温湿度区间提醒你。", parent=self.environment_settings_window)
+        self._close_environment_settings_dialog()
+
+    def _set_environment_settings_status(self, text: str) -> None:
+        if self.environment_settings_status is not None:
+            self.environment_settings_status.set(text)
+
     def _on_right_click(self, event: tk.Event) -> None:
         menu = tk.Menu(self.root, tearoff=0, font=("Microsoft YaHei UI", 10))
         menu.add_command(label="摸摸小灵", command=self._click_reaction)
         menu.add_command(label="隐藏对话", command=self._hide_dialog)
-        size_menu = tk.Menu(menu, tearoff=0, font=("Microsoft YaHei UI", 10))
-        size_menu.add_command(label="小", command=lambda: self._set_size_preset("small"))
-        size_menu.add_command(label="中", command=lambda: self._set_size_preset("medium"))
-        size_menu.add_command(label="大", command=lambda: self._set_size_preset("large"))
-        size_menu.add_command(label="超大", command=lambda: self._set_size_preset("xlarge"))
-        menu.add_cascade(label=f"大小：{self._size_label()}", menu=size_menu)
+        menu.add_command(label="设置环境适宜区间", command=self._open_environment_settings_dialog)
         menu.add_separator()
         menu.add_command(label="再见", command=self.root.destroy)
         menu.tk_popup(int(event.x_root), int(event.y_root))
-
-    def _size_label(self) -> str:
-        return {"small": "小", "medium": "中", "large": "大", "xlarge": "超大"}.get(self.size_preset, "中")
 
 
 def main() -> None:

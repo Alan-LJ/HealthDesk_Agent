@@ -11,6 +11,7 @@ SKILL_PACKAGE_NAMES = [
     "pet_dialogue",
     "daily_report",
     "device_guardian",
+    "web_realtime",
 ]
 
 

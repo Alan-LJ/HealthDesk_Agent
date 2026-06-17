@@ -159,9 +159,9 @@ def finalize_node(state: AgentState) -> AgentState:
     if state.get("final_output"):
         return state
     if state.get("errors"):
-        summary = f"Agent 运行未完成，已返回安全 fallback。错误摘要：{_compact_error(state['errors'][0])}"
+        summary = _fallback_summary_from_errors(state.get("errors", []))
         recommendations: list[RecommendationOutput] = []
-        confidence = 0.2
+        confidence = 0.3
     else:
         summary = _build_summary(state)
         recommendations = _build_recommendations(state)
@@ -292,3 +292,16 @@ def _data_sources_used(state: AgentState) -> list[str]:
 def _compact_error(error: Any) -> str:
     text = str(error).replace("\n", " ").strip()
     return text[:160] or "未知错误"
+
+
+def _fallback_summary_from_errors(errors: list[Any]) -> str:
+    first = _compact_error(errors[0]) if errors else ""
+    if "当前没有状态数据" in first or "simulation tick" in first:
+        return "当前没有状态数据，请先运行一次 simulation tick，再让我分析。"
+    if "未返回 tool_call" in first or "可校验的最终 JSON" in first or "schema 校验失败" in first:
+        return "小灵这次没有拿到稳定的结构化回复，已安全停止。请再试一次，或换个更具体的问题。"
+    if "DeepSeek 调用失败" in first:
+        return "小灵暂时连接不到模型服务，请稍后重试。"
+    if first:
+        return f"小灵这次没有完成分析，已安全停止。错误摘要：{first}"
+    return "小灵这次没有完成分析，请稍后再试。"

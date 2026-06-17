@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import (
     routes_agent_runtime,
+    routes_environment,
     routes_pet,
     routes_simulation,
     routes_state,
@@ -27,6 +28,7 @@ def health() -> dict:
 
 app.include_router(routes_simulation.router)
 app.include_router(routes_state.router)
+app.include_router(routes_environment.router)
 app.include_router(routes_agent_runtime.router)
 app.include_router(routes_traces.router)
 app.include_router(routes_pet.router)
