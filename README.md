@@ -9,8 +9,8 @@
 ## 作品效果
 
 <p align="center">
-  <img src="pics/demo3.png" alt="HealthDesk Agent 桌宠输出办公健康建议" width="360">
-  <img src="pics/demo4.png" alt="点击桌宠后出现爱心特效并唤起对话" width="360">
+  <img src="pics/demo10.png" alt="HealthDesk Agent 桌宠输出办公健康建议" width="360">
+  <img src="pics/demo11.png" alt="点击桌宠后出现爱心特效并唤起对话" width="360">
   <img src="pics/demo5.png" alt="点击桌宠后出现爱心特效并唤起对话" width="360">
   <img src="pics/demo6.png" alt="点击桌宠后出现爱心特效并唤起对话" width="360">
   <img src="pics/demo7.png" alt="点击桌宠后出现爱心特效并唤起对话" width="360">
