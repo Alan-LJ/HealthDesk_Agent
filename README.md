@@ -339,30 +339,6 @@ curl http://127.0.0.1:8000/traces/recent
 curl http://127.0.0.1:8000/traces/{trace_id}
 ```
 
-## 面试讲述亮点
-
-如果你想快速理解这个项目的工程价值，可以重点看这几个点：
-
-1. 真实 Agent，而不是规则假装 Agent
-
-   Python 不用 if/else 决定该调用哪个健康工具。工具选择来自 DeepSeek 的 `tool_calls`，LangGraph 负责状态迁移和停止条件。
-
-2. 上下文边界清楚
-
-   当前状态只能来自 `AIContext`、SQLite 状态工具或 sensor health 工具。RAG 只提供知识依据，不替代当前事实。
-
-3. 输出可消费
-
-   最终输出不是一段随意文本，而是 `HealthAgentFinalOutput`。这让 Web 页面、桌面宠物和 trace 都能稳定消费。
-
-4. 可观测性完整
-
-   Trace 会记录模型调用、工具调用、observation、RAG chunks、guardrail 状态和停止原因，方便复盘 Agent 为什么这样回答。
-
-5. 有真实交互外壳
-
-   Agent 最终能驱动桌宠，而不是停留在命令行 demo。Web 和桌面端都能展示用户可感知的陪伴效果。
-
 ## 测试
 
 ```powershell
